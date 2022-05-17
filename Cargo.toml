@@ -5,6 +5,9 @@ edition = "2021"
 description = "a simple tool to compute time: easy to config, and easy to use."
 license-file = "LICENSE"
 readme = "README.md"
+repository = "https://github.com/jm-observer/timer-util"
+documentation = "https://docs.rs/timer-util/latest/timer-util/"
+homepage = "https://docs.rs/timer-util/latest/timer-util/"
 
 include = [
     "LICENSE", "Cargo.toml", "README.md", "src/*.rs", "examples/*.rs"
