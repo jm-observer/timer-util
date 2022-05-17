@@ -2,7 +2,7 @@
 name = "timer-util"
 version = "0.1.0"
 edition = "2021"
-
+description = "a simple tool to compute time: easy to config, and easy to use."
 license-file = "LICENSE"
 readme = "README.md"
 
