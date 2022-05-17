@@ -1,8 +1,3 @@
-# timer-util
-
-a simple tool to compute time: easy to config, and easy to use. a simple example: 
-
-```
 use std::time::Duration;
 use time::OffsetDateTime;
 use timer_util::*;
@@ -33,5 +28,3 @@ async fn main() -> anyhow::Result<()> {
     handle.await.unwrap();
     Ok(())
 }
-
-```
