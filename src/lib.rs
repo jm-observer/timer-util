@@ -329,10 +329,11 @@ impl DayHourMinuterSecondConf {
             - offset.whole_seconds() as i64) as u64;
         let next_time = NextTime::init(times);
         debug!(
-            "now: {}, next: {}, next time is after {:?}",
+            "now: {}, next: {}, next time is after {:?} = {}s",
             now_local.format(TS_DASHES_BLANK_COLONS_DOT_BLANK)?,
             next_local.format(TS_DASHES_BLANK_COLONS_DOT_BLANK)?,
-            next_time
+            next_time,
+            times
         );
 
         Ok(times)
@@ -493,7 +494,7 @@ impl NextTime {
     fn init(mut times: u64) -> Self {
         let seconds = times % 60;
         times = times / 60;
-        let minuters = times % 64;
+        let minuters = times % 60;
         times = times / 60;
         let hours = times % 60;
         Self {
