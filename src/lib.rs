@@ -10,7 +10,7 @@ pub use data::{
 
 use anyhow::{bail, Result};
 use data::{AsData, DateTime};
-use log::trace;
+use log::{debug, trace};
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::{Add, AddAssign, BitAnd, BitOr, BitOrAssign, Bound, RangeBounds, Shl, Sub};
 use time::{Duration, OffsetDateTime, PrimitiveDateTime};
@@ -319,10 +319,13 @@ impl DayHourMinuterSecondConf {
         let datetime = now_local.clone().into();
         let offset = now_local.clone().offset();
         let next_local = self._next(datetime)?;
-        trace!("now: {:?}, next: {:?}", now_local, next_local);
-        Ok((next_local.unix_timestamp()
+        debug!("now: {}, next: {}", now_local, next_local);
+        let times = (next_local.unix_timestamp()
             - now_local.unix_timestamp()
-            - offset.whole_seconds() as i64) as u64)
+            - offset.whole_seconds() as i64) as u64;
+        let next_time = NextTime::init(times);
+        debug!("next time is after {:?}", next_time);
+        Ok(times)
     }
     fn _next(&self, datetime: DateTime) -> Result<OffsetDateTime> {
         let day_self = self
@@ -469,6 +472,26 @@ pub enum Possible {
     Min,
     Oneself,
     Next,
+}
+#[derive(Debug)]
+pub struct NextTime {
+    hours: u64,
+    minuters: u64,
+    seconds: u64,
+}
+impl NextTime {
+    fn init(mut times: u64) -> Self {
+        let seconds = times % 60;
+        times = times / 60;
+        let minuters = times % 64;
+        times = times / 60;
+        let hours = times % 60;
+        Self {
+            seconds,
+            minuters,
+            hours,
+        }
+    }
 }
 
 impl From<MonthDays> for DayConfBuilder {
