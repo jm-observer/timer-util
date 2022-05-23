@@ -13,7 +13,12 @@ use data::{AsData, DateTime};
 use log::{debug, trace};
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::{Add, AddAssign, BitAnd, BitOr, BitOrAssign, Bound, RangeBounds, Shl, Sub};
+use time::format_description::FormatItem;
+use time::macros::format_description;
 use time::{Duration, OffsetDateTime, PrimitiveDateTime};
+
+const TS_DASHES_BLANK_COLONS_DOT_BLANK: &[FormatItem<'static>] =
+    format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
 
 #[derive(Clone)]
 pub struct MonthDays(u32);
@@ -319,12 +324,17 @@ impl DayHourMinuterSecondConf {
         let datetime = now_local.clone().into();
         let offset = now_local.clone().offset();
         let next_local = self._next(datetime)?;
-        debug!("now: {}, next: {}", now_local, next_local);
         let times = (next_local.unix_timestamp()
             - now_local.unix_timestamp()
             - offset.whole_seconds() as i64) as u64;
         let next_time = NextTime::init(times);
-        debug!("next time is after {:?}", next_time);
+        debug!(
+            "now: {}, next: {}, next time is after {:?}",
+            now_local.format(TS_DASHES_BLANK_COLONS_DOT_BLANK)?,
+            next_local.format(TS_DASHES_BLANK_COLONS_DOT_BLANK)?,
+            next_time
+        );
+
         Ok(times)
     }
     fn _next(&self, datetime: DateTime) -> Result<OffsetDateTime> {

@@ -1,11 +1,11 @@
-use log::debug;
 use std::time::Duration;
-use time::{format_description, OffsetDateTime};
+use time::OffsetDateTime;
 use timer_util::*;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    custom_utils::logger::logger_default_debug("timers");
+    custom_utils::logger::logger_default_debug("timers").unwrap();
+
     // 定时器配置（timer configs）：
     // every weekday or 1st..10st 15st..25st every month    每周一到周日 或者每月的1号到9号、15号到24号
     // every hour   每小时
