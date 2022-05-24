@@ -9,16 +9,17 @@ pub use data::{
 };
 
 use anyhow::{bail, Result};
+use chrono::{Datelike, Local, NaiveTime};
 use data::{AsData, DateTime};
 use log::{debug, trace};
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::{Add, AddAssign, BitAnd, BitOr, BitOrAssign, Bound, RangeBounds, Shl, Sub};
-use time::format_description::FormatItem;
-use time::macros::format_description;
-use time::{Duration, OffsetDateTime, PrimitiveDateTime};
-
-const TS_DASHES_BLANK_COLONS_DOT_BLANK: &[FormatItem<'static>] =
-    format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
+// use time::format_description::FormatItem;
+// use time::macros::format_description;
+// use time::{Duration, OffsetDateTime, PrimitiveDateTime};
+//
+// const TS_DASHES_BLANK_COLONS_DOT_BLANK: &[FormatItem<'static>] =
+//     format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
 
 #[derive(Clone)]
 pub struct MonthDays(u32);
@@ -320,7 +321,7 @@ impl DayHourMinuterSecondConf {
         }
     }
     pub fn next(&self) -> Result<u64> {
-        let now_local = OffsetDateTime::now_local()?;
+        let now_local = Local::now();
         let datetime = now_local.clone().into();
         let offset = now_local.clone().offset();
         let next_local = self._next(datetime)?;
@@ -328,13 +329,14 @@ impl DayHourMinuterSecondConf {
             - now_local.unix_timestamp()
             - offset.whole_seconds() as i64) as u64;
         let next_time = NextTime::init(times);
-        debug!(
-            "now: {}, next: {}, next time is after {:?} = {}s",
-            now_local.format(TS_DASHES_BLANK_COLONS_DOT_BLANK)?,
-            next_local.format(TS_DASHES_BLANK_COLONS_DOT_BLANK)?,
-            next_time,
-            times
-        );
+        todo!();
+        // debug!(
+        //     "now: {}, next: {}, next time is after {:?} = {}s",
+        //     now_local.format(TS_DASHES_BLANK_COLONS_DOT_BLANK)?,
+        //     next_local.format(TS_DASHES_BLANK_COLONS_DOT_BLANK)?,
+        //     next_time,
+        //     times
+        // );
 
         Ok(times)
     }
@@ -403,13 +405,13 @@ impl DayHourMinuterSecondConf {
             minuter_possible,
             second_possible
         );
-        let time_next = time::Time::from_hms(hour as u8, minuter as u8, second as u8)?;
+        let time_next = NaiveTime::from_hms(hour, minuter as u32, second as u32)?;
         let date_month = if let Some(month_days) = &self.month_days {
             let (month_day, month_day_recount) =
                 get_val(day_possible, month_days, datetime.month_day);
             if month_day_recount {
                 let mut date = datetime.date.clone();
-                date = date.replace_month(date.clone().month().next())?;
+                date = date.replace_month(date.month().next())?;
                 Some(date.replace_day(month_day as u8)?)
             } else {
                 let mut date = datetime.date.clone();
@@ -453,7 +455,8 @@ impl DayHourMinuterSecondConf {
         } else {
             date_week.unwrap()
         };
-        Ok(PrimitiveDateTime::new(date, time_next).assume_utc())
+        todo!()
+        // Ok(PrimitiveDateTime::new(date, time_next).assume_utc())
     }
 }
 

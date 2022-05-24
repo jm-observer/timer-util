@@ -1,7 +1,8 @@
-use time::{OffsetDateTime, Weekday};
+use chrono::{Datelike, Local, NaiveDate, Timelike, Weekday as CWeekday};
+// use time::{OffsetDateTime, Weekday};
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) struct DateTime {
-    pub(crate) date: time::Date,
+    pub(crate) date: NaiveDate,
     pub(crate) month_day: InnerMonthDay,
     pub(crate) week_day: InnerWeekDay,
     pub(crate) hour: InnerHour,
@@ -226,17 +227,19 @@ pub(crate) struct InnerSecond(pub(crate) u64);
 impl DateTime {
     #[allow(dead_code)]
     pub(crate) fn default() -> anyhow::Result<Self> {
-        Ok(OffsetDateTime::now_local()?.into())
+        let now = Local::now();
+        Ok(now.into())
     }
 }
-impl From<OffsetDateTime> for DateTime {
-    fn from(tmp: OffsetDateTime) -> Self {
-        let month_day = InnerMonthDay(tmp.clone().date().day() as u32);
-        let week_day: InnerWeekDay = tmp.clone().date().weekday().into();
-        let date = tmp.clone().date();
-        let time = tmp.time();
-        let hour = InnerHour(time.clone().hour() as u32);
-        let minuter = InnerMinuter(time.clone().minute() as u64);
+impl From<chrono::DateTime<Local>> for DateTime {
+    fn from(tmp: chrono::DateTime<Local>) -> Self {
+        let date = tmp.naive_local().date();
+        let time = tmp.naive_local().time();
+
+        let month_day = InnerMonthDay(date.month());
+        let week_day: InnerWeekDay = date.weekday().into();
+        let hour = InnerHour(time.hour());
+        let minuter = InnerMinuter(time.minute() as u64);
         let second = InnerSecond(time.second() as u64);
         Self {
             date,
@@ -310,30 +313,29 @@ impl<T, A: AsData<T>> AsData<T> for &A {
         (*self).as_data()
     }
 }
-
-impl From<time::Weekday> for InnerWeekDay {
-    fn from(day: Weekday) -> Self {
+impl From<CWeekday> for InnerWeekDay {
+    fn from(day: CWeekday) -> Self {
         match day {
-            Weekday::Monday => InnerWeekDay(1),
-            Weekday::Tuesday => InnerWeekDay(2),
-            Weekday::Wednesday => InnerWeekDay(3),
-            Weekday::Thursday => InnerWeekDay(4),
-            Weekday::Friday => InnerWeekDay(5),
-            Weekday::Saturday => InnerWeekDay(6),
-            Weekday::Sunday => InnerWeekDay(7),
+            CWeekday::Mon => InnerWeekDay(1),
+            CWeekday::Tue => InnerWeekDay(2),
+            CWeekday::Wed => InnerWeekDay(3),
+            CWeekday::Thu => InnerWeekDay(4),
+            CWeekday::Fri => InnerWeekDay(5),
+            CWeekday::Sat => InnerWeekDay(6),
+            CWeekday::Sun => InnerWeekDay(7),
         }
     }
 }
-impl From<time::Weekday> for WeekDay {
-    fn from(day: Weekday) -> Self {
+impl From<CWeekday> for WeekDay {
+    fn from(day: CWeekday) -> Self {
         match day {
-            Weekday::Monday => Self::W1,
-            Weekday::Tuesday => Self::W2,
-            Weekday::Wednesday => Self::W3,
-            Weekday::Thursday => Self::W4,
-            Weekday::Friday => Self::W5,
-            Weekday::Saturday => Self::W6,
-            Weekday::Sunday => Self::W7,
+            CWeekday::Mon => Self::W1,
+            CWeekday::Tue => Self::W2,
+            CWeekday::Wed => Self::W3,
+            CWeekday::Thu => Self::W4,
+            CWeekday::Fri => Self::W5,
+            CWeekday::Sat => Self::W6,
+            CWeekday::Sun => Self::W7,
         }
     }
 }
