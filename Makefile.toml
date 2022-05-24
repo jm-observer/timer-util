@@ -1,0 +1,4 @@
+[tasks.build-rel]
+script = '''
+docker run --rm -it -v "$(pwd)":/home/rust/src -v "$(pwd)/target/registry":/root/.cargo/registry messense/rust-musl-cross:aarch64-musl cargo build --example arm64_timer --release
+'''

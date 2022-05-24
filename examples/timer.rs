@@ -1,10 +1,10 @@
+use log::LevelFilter;
 use std::time::Duration;
-use time::OffsetDateTime;
 use timer_util::*;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    custom_utils::logger::logger_default_debug("timers").unwrap();
+    custom_utils::logger::logger_default("timers", LevelFilter::Trace).unwrap();
 
     // 定时器配置（timer configs）：
     // every weekday or 1st..10st 15st..25st every month    每周一到周日 或者每月的1号到9号、15号到24号
@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
             let off_seconds = conf.next().unwrap();
             println!("next seconds: {}", off_seconds);
             tokio::time::sleep(Duration::from_secs(off_seconds)).await;
-            println!("{:?}", OffsetDateTime::now_local().unwrap());
+            // println!("{:?}", OffsetDateTime::now_local().unwrap());
         }
     });
     handle.await.unwrap();

@@ -1,4 +1,4 @@
-use chrono::{Datelike, Local, NaiveDate, Timelike, Weekday as CWeekday};
+use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, Timelike, Weekday as CWeekday};
 // use time::{OffsetDateTime, Weekday};
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) struct DateTime {
@@ -227,16 +227,16 @@ pub(crate) struct InnerSecond(pub(crate) u64);
 impl DateTime {
     #[allow(dead_code)]
     pub(crate) fn default() -> anyhow::Result<Self> {
-        let now = Local::now();
+        let now = Local::now().naive_local();
         Ok(now.into())
     }
 }
-impl From<chrono::DateTime<Local>> for DateTime {
-    fn from(tmp: chrono::DateTime<Local>) -> Self {
-        let date = tmp.naive_local().date();
-        let time = tmp.naive_local().time();
+impl From<NaiveDateTime> for DateTime {
+    fn from(tmp: NaiveDateTime) -> Self {
+        let date = tmp.date();
+        let time = tmp.time();
 
-        let month_day = InnerMonthDay(date.month());
+        let month_day = InnerMonthDay(date.day());
         let week_day: InnerWeekDay = date.weekday().into();
         let hour = InnerHour(time.hour());
         let minuter = InnerMinuter(time.minute() as u64);

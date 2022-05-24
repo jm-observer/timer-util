@@ -9,7 +9,7 @@ pub use data::{
 };
 
 use anyhow::{bail, Result};
-use chrono::{Datelike, Local, NaiveTime};
+use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use data::{AsData, DateTime};
 use log::{debug, trace};
 use std::fmt::{Debug, Display, Formatter};
@@ -321,26 +321,19 @@ impl DayHourMinuterSecondConf {
         }
     }
     pub fn next(&self) -> Result<u64> {
-        let now_local = Local::now();
+        let now_local = Local::now().naive_local();
         let datetime = now_local.clone().into();
-        let offset = now_local.clone().offset();
+        // let offset = now_local.clone().offset();
         let next_local = self._next(datetime)?;
-        let times = (next_local.unix_timestamp()
-            - now_local.unix_timestamp()
-            - offset.whole_seconds() as i64) as u64;
+        let times = (next_local.timestamp() - now_local.timestamp()) as u64;
         let next_time = NextTime::init(times);
-        todo!();
-        // debug!(
-        //     "now: {}, next: {}, next time is after {:?} = {}s",
-        //     now_local.format(TS_DASHES_BLANK_COLONS_DOT_BLANK)?,
-        //     next_local.format(TS_DASHES_BLANK_COLONS_DOT_BLANK)?,
-        //     next_time,
-        //     times
-        // );
-
+        debug!(
+            "now: {}, next: {}, next time is after {:?} = {}s",
+            now_local, next_local, next_time, times
+        );
         Ok(times)
     }
-    fn _next(&self, datetime: DateTime) -> Result<OffsetDateTime> {
+    fn _next(&self, datetime: DateTime) -> Result<NaiveDateTime> {
         let day_self = self
             .month_days
             .as_ref()
@@ -405,31 +398,49 @@ impl DayHourMinuterSecondConf {
             minuter_possible,
             second_possible
         );
-        let time_next = NaiveTime::from_hms(hour, minuter as u32, second as u32)?;
+        let day_week_possible = day_possible;
+        let time_next = NaiveTime::from_hms(hour, minuter as u32, second as u32);
+        //
         let date_month = if let Some(month_days) = &self.month_days {
-            let (month_day, month_day_recount) =
+            // 计算月日期的下个日期
+            let (mut month_day, mut month_day_recount) =
                 get_val(day_possible, month_days, datetime.month_day);
-            if month_day_recount {
-                let mut date = datetime.date.clone();
-                date = date.replace_month(date.month().next())?;
-                Some(date.replace_day(month_day as u8)?)
-            } else {
-                let mut date = datetime.date.clone();
-                // this month don't has the day
-                match date.replace_day(month_day as u8) {
-                    Ok(day) => Some(day),
-                    Err(_) => {
-                        let month_day = month_days.min_val();
-                        date = date.replace_month(date.clone().month().next())?;
-                        Some(date.replace_day(month_day as u8)?)
-                    }
+            let year = datetime.date.year();
+            let month = datetime.date.month();
+            trace!(
+                "{:?} {:?} {:?} {:?}",
+                month_day,
+                month_day_recount,
+                day_possible,
+                datetime.month_day
+            );
+            if !month_day_recount {
+                // 这个月的日期：
+                if let Some(date) = NaiveDate::from_ymd_opt(year, month, month_day) {
+                    Some(date)
+                } else {
+                    day_possible = Possible::Min;
+                    month_day = month_days.min_val();
+                    // 下个月：月数+1，年也许也要加+1
+                    Some(add_month(year, month, month_day)?)
                 }
+            } else {
+                // 下个月：月数+1，年也许也要加+1
+                Some(add_month(year, month, month_day)?)
             }
         } else {
             None
         };
-        let date_week = if let Some(month_days) = &self.week_days {
-            let (week_day, week_day_recount) = get_val(day_possible, month_days, datetime.week_day);
+        let date_week = if let Some(week_days) = &self.week_days {
+            let (week_day, week_day_recount) =
+                get_val(day_week_possible, week_days, datetime.week_day);
+            trace!(
+                "week: {:?} {:?} {:?} {:?}",
+                week_day,
+                day_week_possible,
+                datetime.week_day,
+                week_day_recount
+            );
             if week_day_recount {
                 let mut date = datetime.date.clone();
                 date += Duration::days((week_day + 7 - datetime.week_day.as_data()) as i64);
@@ -442,6 +453,7 @@ impl DayHourMinuterSecondConf {
         } else {
             None
         };
+        trace!("{:?} {:?}", date_month, date_week);
         let date = if let Some(date_month) = date_month {
             if let Some(date_week) = date_week {
                 if date_month > date_week {
@@ -455,12 +467,13 @@ impl DayHourMinuterSecondConf {
         } else {
             date_week.unwrap()
         };
-        todo!()
-        // Ok(PrimitiveDateTime::new(date, time_next).assume_utc())
+        Ok(NaiveDateTime::new(date, time_next))
     }
 }
-
-pub fn get_val<D: Operator>(
+///
+/// 依据Possible，获取对应的值
+/// return( 获取的值,是否重新开始)
+fn get_val<D: Operator>(
     possible: Possible,
     d: &D,
     oneself: impl AsData<D::ValTy>,
@@ -479,6 +492,24 @@ pub fn get_val<D: Operator>(
         }
     };
     (data, re_count)
+}
+
+fn add_month(mut year: i32, mut month: u32, day: u32) -> Result<NaiveDate> {
+    let mut add_month_times = 0;
+    loop {
+        month += 1;
+        if month > 12 {
+            month = 1;
+            year += 1;
+        }
+        if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
+            return Ok(date);
+        }
+        add_month_times += 1;
+        if add_month_times > 12 {
+            bail!("todo")
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -571,8 +602,10 @@ mod test {
         DateTime, Hour, InnerHour, InnerMinuter, InnerMonthDay, InnerSecond, InnerWeekDay, Minuter,
         MonthDay, Second, WeekDay,
     };
+    use crate::{D31, H12};
     use anyhow::Result;
-    use time::Month;
+    use chrono::{Datelike, NaiveDate};
+    use log::LevelFilter;
 
     #[test]
     fn test_get_val() -> Result<()> {
@@ -604,6 +637,7 @@ mod test {
 
     #[test]
     fn test() -> Result<()> {
+        custom_utils::logger::logger_default("timers", LevelFilter::Trace).unwrap();
         let conf = DayHourMinuterSecondConf::default_week_days(WeekDays::default_array(&[
             WeekDay::W5,
             WeekDay::W3,
@@ -626,7 +660,7 @@ mod test {
         ]));
 
         let mut dt0 = DateTime {
-            date: time::Date::from_calendar_date(2022, Month::May, 15)?,
+            date: NaiveDate::from_ymd_opt(2022, 5, 15).unwrap(),
             month_day: InnerMonthDay(15),
             week_day: InnerWeekDay(7),
             hour: InnerHour(10),
@@ -672,12 +706,12 @@ mod test {
             dt0_dist.hour = InnerHour(5);
             dt0_dist.week_day = InnerWeekDay(3);
             dt0_dist.month_day = InnerMonthDay(18);
-            dt0_dist.date = time::Date::from_calendar_date(2022, Month::May, 18)?;
+            dt0_dist.date = NaiveDate::from_ymd_opt(2022, 5, 18).unwrap();
             assert_eq!(dist, dt0_dist);
         }
         // -------------------------------
         let dt0 = DateTime {
-            date: time::Date::from_calendar_date(2022, Month::May, 20)?,
+            date: NaiveDate::from_ymd_opt(2022, 5, 20).unwrap(),
             month_day: InnerMonthDay(20),
             week_day: InnerWeekDay(5),
             hour: InnerHour(15),
@@ -692,7 +726,7 @@ mod test {
             dt0_dist.second = InnerSecond(15);
             dt0_dist.minuter = InnerMinuter(15);
             dt0_dist.hour = InnerHour(5);
-            dt0_dist.date = time::Date::from_calendar_date(2022, Month::May, 24)?;
+            dt0_dist.date = NaiveDate::from_ymd_opt(2022, 5, 24).unwrap();
             assert_eq!(dist, dt0_dist);
         }
         // -------------------------------
@@ -717,7 +751,7 @@ mod test {
             Second::S45,
         ]));
         let dt0 = DateTime {
-            date: time::Date::from_calendar_date(2022, Month::April, 29)?,
+            date: NaiveDate::from_ymd_opt(2022, 4, 29).unwrap(),
             month_day: InnerMonthDay(29),
             week_day: InnerWeekDay(5),
             hour: InnerHour(15),
@@ -732,8 +766,67 @@ mod test {
             dt0_dist.second = InnerSecond(15);
             dt0_dist.minuter = InnerMinuter(15);
             dt0_dist.hour = InnerHour(5);
-            dt0_dist.date = time::Date::from_calendar_date(2022, Month::May, 4)?;
+            dt0_dist.date = NaiveDate::from_ymd_opt(2022, 5, 4).unwrap();
             assert_eq!(dist, dt0_dist);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_year() -> Result<()> {
+        custom_utils::logger::logger_default("timers", LevelFilter::Trace).unwrap();
+        let conf = DayHourMinuterSecondConf::default_month_days(MonthDays::default_value(D31))
+            .build_with_hours(Hours::default_array(&[H12]))
+            .build_with_minuter(Minuters::default_array(&[Minuter::M30]))
+            .build_with_second(Seconds::default_array(&[Second::S0]));
+        let dt0 = DateTime {
+            date: NaiveDate::from_ymd_opt(2021, 12, 31).unwrap(),
+            month_day: InnerMonthDay(31),
+            week_day: InnerWeekDay(5),
+            hour: InnerHour(12),
+            minuter: InnerMinuter(30),
+            second: InnerSecond(30),
+        };
+        {
+            let dist: DateTime = conf._next(dt0)?.into();
+            let mut dt0_dist = dist.clone();
+            dt0_dist.second = InnerSecond(0);
+            dt0_dist.minuter = InnerMinuter(30);
+            dt0_dist.hour = InnerHour(12);
+            dt0_dist.week_day = InnerWeekDay(1);
+            dt0_dist.month_day = InnerMonthDay(31);
+            assert!(dist == dt0_dist, "{:?}", dist);
+            assert!(dist.date.year() == 2022, "{:?}", dist.date);
+            assert!(dist.date.month() == 1, "{:?}", dist.date);
+        }
+        Ok(())
+    }
+    #[test]
+    fn test_month() -> Result<()> {
+        custom_utils::logger::logger_default("timers", LevelFilter::Trace).unwrap();
+        let conf = DayHourMinuterSecondConf::default_month_days(MonthDays::default_value(D31))
+            .build_with_hours(Hours::default_array(&[H12]))
+            .build_with_minuter(Minuters::default_array(&[Minuter::M30]))
+            .build_with_second(Seconds::default_array(&[Second::S0]));
+        let dt0 = DateTime {
+            date: NaiveDate::from_ymd_opt(2022, 1, 31).unwrap(),
+            month_day: InnerMonthDay(31),
+            week_day: InnerWeekDay(5),
+            hour: InnerHour(12),
+            minuter: InnerMinuter(30),
+            second: InnerSecond(30),
+        };
+        {
+            let dist: DateTime = conf._next(dt0)?.into();
+            let mut dt0_dist = dist.clone();
+            dt0_dist.second = InnerSecond(0);
+            dt0_dist.minuter = InnerMinuter(30);
+            dt0_dist.hour = InnerHour(12);
+            dt0_dist.week_day = InnerWeekDay(4);
+            dt0_dist.month_day = InnerMonthDay(31);
+            assert!(dist == dt0_dist, "{:?}", dist);
+            assert!(dist.date.year() == 2022, "{:?}", dist.date);
+            assert!(dist.date.month() == 3, "{:?}", dist.date);
         }
         Ok(())
     }
