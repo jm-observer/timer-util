@@ -1,10 +1,11 @@
 [package]
 name = "timer-util"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "a simple tool to compute time: easy to config, and easy to use."
 license-file = "LICENSE"
 readme = "README.md"
+keywords = ["timer"]
 repository = "https://github.com/jm-observer/timer-util"
 documentation = "https://docs.rs/timer-util/latest/timer-util/"
 homepage = "https://docs.rs/timer-util/latest/timer-util/"
