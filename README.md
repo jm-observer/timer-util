@@ -10,7 +10,7 @@ use timer_util::*;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // 定时器配置（timer configs）：
-    // every weekday or 1st..10st 15st..25st every month    每周一到周日 或者每月的1号到9号、15号到24号
+    // every weekday or 1st..10st 15st..25st every month    每周六 或者每月的1号到9号、15号到24号
     // every hour   每小时
     // 0st/10st/20st/30st/40st/50st minuter 第0/10/20/30/40/50分钟
     // 0st/30st second  第0/30秒
@@ -27,7 +27,7 @@ async fn main() -> anyhow::Result<()> {
             let off_seconds = conf.next().unwrap();
             println!("next seconds: {}", off_seconds);
             tokio::time::sleep(Duration::from_secs(off_seconds)).await;
-            println!("{:?}", OffsetDateTime::now_local().unwrap());
+            // println!("{:?}", OffsetDateTime::now_local().unwrap());
         }
     });
     handle.await.unwrap();
