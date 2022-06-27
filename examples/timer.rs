@@ -1,10 +1,9 @@
-use log::LevelFilter;
 use std::time::Duration;
 use timer_util::*;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    custom_utils::logger::logger_default("timers", LevelFilter::Trace).unwrap();
+    custom_utils::logger::logger_stdout_debug();
 
     // 定时器配置（timer configs）：
     // every weekday or 1st..10st 15st..25st every month    每周六 或者每月的1号到9号、15号到24号

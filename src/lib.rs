@@ -1,3 +1,4 @@
+mod compute;
 pub mod data;
 
 pub use data::{
@@ -38,6 +39,8 @@ impl Operator for Hours {
     const ZERO: Self::ValTy = 0;
     const DEFAULT_MAX: Self::ValTy = u32::MAX >> 8;
     type ValTy = u32;
+    type DataTy = Hour;
+
     fn _default() -> Self {
         Self(0)
     }
@@ -55,6 +58,8 @@ impl Operator for Seconds {
     const ZERO: Self::ValTy = 0;
     const DEFAULT_MAX: Self::ValTy = u64::MAX >> 4;
     type ValTy = u64;
+    type DataTy = Second;
+
     fn _default() -> Self {
         Self(0)
     }
@@ -72,6 +77,8 @@ impl Operator for Minuters {
     const ZERO: Self::ValTy = 0;
     const DEFAULT_MAX: Self::ValTy = u64::MAX >> 4;
     type ValTy = u64;
+    type DataTy = Minuter;
+
     fn _default() -> Self {
         Self(0)
     }
@@ -90,6 +97,8 @@ impl Operator for MonthDays {
     const ZERO: Self::ValTy = 0;
     const DEFAULT_MAX: Self::ValTy = u32::MAX << 1;
     type ValTy = u32;
+    type DataTy = MonthDay;
+
     fn _default() -> Self {
         Self(0)
     }
@@ -108,6 +117,7 @@ impl Operator for WeekDays {
     const ZERO: Self::ValTy = 0;
     const DEFAULT_MAX: Self::ValTy = u8::MAX << 1;
     type ValTy = u8;
+    type DataTy = WeekDay;
 
     fn _default() -> Self {
         Self(0)
@@ -138,14 +148,16 @@ pub trait Operator: Sized {
         + BitAnd<Output = Self::ValTy>
         + Display;
 
+    type DataTy: AsData<Self::ValTy>;
+
     fn _default() -> Self;
     #[inline]
-    fn default_value(val: impl AsData<Self::ValTy>) -> Self {
+    fn default_value(val: Self::DataTy) -> Self {
         let ins = Self::_default();
         ins.add(val)
     }
     #[inline]
-    fn default_range<A: AsData<Self::ValTy>>(range: impl RangeBounds<A>) -> Result<Self> {
+    fn default_range(range: impl RangeBounds<Self::DataTy>) -> Result<Self> {
         let ins = Self::_default();
         ins.add_range(range)
     }
@@ -155,11 +167,11 @@ pub trait Operator: Sized {
         ins._mut_val(Self::DEFAULT_MAX);
         ins
     }
-    fn default_array(vals: &[impl AsData<Self::ValTy>]) -> Self {
+    fn default_array(vals: &[Self::DataTy]) -> Self {
         let ins = Self::_default();
         ins.add_array(vals)
     }
-    fn add_array(mut self, vals: &[impl AsData<Self::ValTy>]) -> Self {
+    fn add_array(mut self, vals: &[Self::DataTy]) -> Self {
         let mut val = self._val();
         for i in vals {
             val |= Self::ONE << i.as_data();
@@ -167,12 +179,12 @@ pub trait Operator: Sized {
         self._mut_val(val);
         self
     }
-    fn add(mut self, index: impl AsData<Self::ValTy>) -> Self {
+    fn add(mut self, index: Self::DataTy) -> Self {
         let index = index.as_data();
         self._mut_val(self._val() | (Self::ONE << index));
         self
     }
-    fn add_range<A: AsData<Self::ValTy>>(mut self, range: impl RangeBounds<A>) -> Result<Self> {
+    fn add_range(mut self, range: impl RangeBounds<Self::DataTy>) -> Result<Self> {
         let mut first = match range.start_bound() {
             Bound::Unbounded => Self::MIN,
             Bound::Included(first) => first.as_data(),
@@ -207,13 +219,13 @@ pub trait Operator: Sized {
         }
         res
     }
-    fn contain<D: AsData<Self::ValTy>>(&self, index: D) -> bool {
+    fn contain(&self, index: Self::DataTy) -> bool {
         let index = index.as_data();
         let val = self._val();
         val & (Self::ONE << index) > Self::ZERO
     }
     /// 取下一个持有值
-    fn next<D: AsData<Self::ValTy>>(&self, index: D) -> Option<Self::ValTy> {
+    fn next(&self, index: Self::DataTy) -> Option<Self::ValTy> {
         let mut first = index.as_data() + Self::ONE;
         let val = self._val();
         while first <= Self::MAX {
@@ -403,7 +415,7 @@ impl DayHourMinuterSecondConf {
         //
         let date_month = if let Some(month_days) = &self.month_days {
             // 计算月日期的下个日期
-            let (mut month_day, mut month_day_recount) =
+            let (mut month_day, month_day_recount) =
                 get_val(day_possible, month_days, datetime.month_day);
             let year = datetime.date.year();
             let month = datetime.date.month();
@@ -473,11 +485,7 @@ impl DayHourMinuterSecondConf {
 ///
 /// 依据Possible，获取对应的值
 /// return( 获取的值,是否重新开始)
-fn get_val<D: Operator>(
-    possible: Possible,
-    d: &D,
-    oneself: impl AsData<D::ValTy>,
-) -> (D::ValTy, bool) {
+fn get_val<D: Operator>(possible: Possible, d: &D, oneself: D::DataTy) -> (D::ValTy, bool) {
     let mut re_count = false;
     let data = match possible {
         Possible::Min => d.min_val(),
@@ -598,10 +606,7 @@ impl Debug for WeekDays {
 mod test {
     use super::{get_val, DayHourMinuterSecondConf, Possible};
     use super::{Hours, Minuters, MonthDays, Operator, Seconds, WeekDays};
-    use crate::data::{
-        DateTime, Hour, InnerHour, InnerMinuter, InnerMonthDay, InnerSecond, InnerWeekDay, Minuter,
-        MonthDay, Second, WeekDay,
-    };
+    use crate::data::{DateTime, Hour, Minuter, MonthDay, Second, WeekDay};
     use crate::{D31, H12};
     use anyhow::Result;
     use chrono::{Datelike, NaiveDate};
@@ -637,7 +642,7 @@ mod test {
 
     #[test]
     fn test() -> Result<()> {
-        custom_utils::logger::logger_default("timers", LevelFilter::Trace).unwrap();
+        // custom_utils::logger::logger_stdout_debug();
         let conf = DayHourMinuterSecondConf::default_week_days(WeekDays::default_array(&[
             WeekDay::W5,
             WeekDay::W3,
@@ -661,71 +666,71 @@ mod test {
 
         let mut dt0 = DateTime {
             date: NaiveDate::from_ymd_opt(2022, 5, 15).unwrap(),
-            month_day: InnerMonthDay(15),
-            week_day: InnerWeekDay(7),
-            hour: InnerHour(10),
-            minuter: InnerMinuter(30),
-            second: InnerSecond(30),
+            month_day: 15.into(),
+            week_day: 7.into(),
+            hour: 10.into(),
+            minuter: 30.into(),
+            second: 30.into(),
         };
 
         {
             let dist: DateTime = conf._next(dt0)?.into();
             let mut dt0_dist = dt0.clone();
-            dt0_dist.second = InnerSecond(45);
+            dt0_dist.second = 45.into();
             assert!(dist == dt0_dist);
-            dt0_dist.second = InnerSecond(31);
+            dt0_dist.second = 31.into();
             assert!(dist != dt0_dist);
         }
         //
         {
-            dt0.second = InnerSecond(45);
+            dt0.second = 45.into();
             let dist: DateTime = conf._next(dt0)?.into();
             let mut dt0_dist = dt0.clone();
-            dt0_dist.second = InnerSecond(15);
-            dt0_dist.minuter = InnerMinuter(45);
+            dt0_dist.second = 15.into();
+            dt0_dist.minuter = 45.into();
             assert!(dist == dt0_dist);
         }
         {
-            dt0.second = InnerSecond(45);
-            dt0.minuter = InnerMinuter(45);
+            dt0.second = 45.into();
+            dt0.minuter = 45.into();
             let dist: DateTime = conf._next(dt0)?.into();
             let mut dt0_dist = dt0.clone();
-            dt0_dist.second = InnerSecond(15);
-            dt0_dist.minuter = InnerMinuter(15);
-            dt0_dist.hour = InnerHour(15);
+            dt0_dist.second = 15.into();
+            dt0_dist.minuter = 15.into();
+            dt0_dist.hour = 15.into();
             assert!(dist == dt0_dist);
         }
         {
-            dt0.second = InnerSecond(45);
-            dt0.minuter = InnerMinuter(45);
-            dt0.hour = InnerHour(15);
+            dt0.second = 45.into();
+            dt0.minuter = 45.into();
+            dt0.hour = 15.into();
             let dist: DateTime = conf._next(dt0)?.into();
             let mut dt0_dist = dt0.clone();
-            dt0_dist.second = InnerSecond(15);
-            dt0_dist.minuter = InnerMinuter(15);
-            dt0_dist.hour = InnerHour(5);
-            dt0_dist.week_day = InnerWeekDay(3);
-            dt0_dist.month_day = InnerMonthDay(18);
+            dt0_dist.second = 15.into();
+            dt0_dist.minuter = 15.into();
+            dt0_dist.hour = 5.into();
+            dt0_dist.week_day = 3.into();
+            dt0_dist.month_day = 18.into();
             dt0_dist.date = NaiveDate::from_ymd_opt(2022, 5, 18).unwrap();
             assert_eq!(dist, dt0_dist);
         }
         // -------------------------------
         let dt0 = DateTime {
             date: NaiveDate::from_ymd_opt(2022, 5, 20).unwrap(),
-            month_day: InnerMonthDay(20),
-            week_day: InnerWeekDay(5),
-            hour: InnerHour(15),
-            minuter: InnerMinuter(45),
-            second: InnerSecond(45),
+            month_day: 20.into(),
+            week_day: 5.into(),
+            hour: 15.into(),
+            minuter: 45.into(),
+            second: 45.into(),
         };
         {
             let dist: DateTime = conf._next(dt0)?.into();
             let mut dt0_dist = dt0.clone();
-            dt0_dist.week_day = InnerWeekDay(2);
-            dt0_dist.month_day = InnerMonthDay(24);
-            dt0_dist.second = InnerSecond(15);
-            dt0_dist.minuter = InnerMinuter(15);
-            dt0_dist.hour = InnerHour(5);
+            dt0_dist.week_day = 2.into();
+            dt0_dist.month_day = 24.into();
+            dt0_dist.second = 15.into();
+            dt0_dist.minuter = 15.into();
+            dt0_dist.hour = 5.into();
             dt0_dist.date = NaiveDate::from_ymd_opt(2022, 5, 24).unwrap();
             assert_eq!(dist, dt0_dist);
         }
@@ -752,20 +757,20 @@ mod test {
         ]));
         let dt0 = DateTime {
             date: NaiveDate::from_ymd_opt(2022, 4, 29).unwrap(),
-            month_day: InnerMonthDay(29),
-            week_day: InnerWeekDay(5),
-            hour: InnerHour(15),
-            minuter: InnerMinuter(45),
-            second: InnerSecond(45),
+            month_day: 29.into(),
+            week_day: 5.into(),
+            hour: 15.into(),
+            minuter: 45.into(),
+            second: 45.into(),
         };
         {
             let dist: DateTime = conf._next(dt0)?.into();
             let mut dt0_dist = dt0.clone();
-            dt0_dist.week_day = InnerWeekDay(3);
-            dt0_dist.month_day = InnerMonthDay(4);
-            dt0_dist.second = InnerSecond(15);
-            dt0_dist.minuter = InnerMinuter(15);
-            dt0_dist.hour = InnerHour(5);
+            dt0_dist.week_day = 3.into();
+            dt0_dist.month_day = 4.into();
+            dt0_dist.second = 15.into();
+            dt0_dist.minuter = 15.into();
+            dt0_dist.hour = 5.into();
             dt0_dist.date = NaiveDate::from_ymd_opt(2022, 5, 4).unwrap();
             assert_eq!(dist, dt0_dist);
         }
@@ -774,27 +779,27 @@ mod test {
 
     #[test]
     fn test_year() -> Result<()> {
-        custom_utils::logger::logger_default("timers", LevelFilter::Trace).unwrap();
+        // custom_utils::logger::logger_stdout_debug();
         let conf = DayHourMinuterSecondConf::default_month_days(MonthDays::default_value(D31))
             .build_with_hours(Hours::default_array(&[H12]))
             .build_with_minuter(Minuters::default_array(&[Minuter::M30]))
             .build_with_second(Seconds::default_array(&[Second::S0]));
         let dt0 = DateTime {
             date: NaiveDate::from_ymd_opt(2021, 12, 31).unwrap(),
-            month_day: InnerMonthDay(31),
-            week_day: InnerWeekDay(5),
-            hour: InnerHour(12),
-            minuter: InnerMinuter(30),
-            second: InnerSecond(30),
+            month_day: 31.into(),
+            week_day: 5.into(),
+            hour: 12.into(),
+            minuter: 30.into(),
+            second: 30.into(),
         };
         {
             let dist: DateTime = conf._next(dt0)?.into();
             let mut dt0_dist = dist.clone();
-            dt0_dist.second = InnerSecond(0);
-            dt0_dist.minuter = InnerMinuter(30);
-            dt0_dist.hour = InnerHour(12);
-            dt0_dist.week_day = InnerWeekDay(1);
-            dt0_dist.month_day = InnerMonthDay(31);
+            dt0_dist.second = 0.into();
+            dt0_dist.minuter = 30.into();
+            dt0_dist.hour = 12.into();
+            dt0_dist.week_day = 1.into();
+            dt0_dist.month_day = 31.into();
             assert!(dist == dt0_dist, "{:?}", dist);
             assert!(dist.date.year() == 2022, "{:?}", dist.date);
             assert!(dist.date.month() == 1, "{:?}", dist.date);
@@ -803,27 +808,27 @@ mod test {
     }
     #[test]
     fn test_month() -> Result<()> {
-        custom_utils::logger::logger_default("timers", LevelFilter::Trace).unwrap();
+        // custom_utils::logger::logger_stdout_debug();
         let conf = DayHourMinuterSecondConf::default_month_days(MonthDays::default_value(D31))
             .build_with_hours(Hours::default_array(&[H12]))
             .build_with_minuter(Minuters::default_array(&[Minuter::M30]))
             .build_with_second(Seconds::default_array(&[Second::S0]));
         let dt0 = DateTime {
             date: NaiveDate::from_ymd_opt(2022, 1, 31).unwrap(),
-            month_day: InnerMonthDay(31),
-            week_day: InnerWeekDay(5),
-            hour: InnerHour(12),
-            minuter: InnerMinuter(30),
-            second: InnerSecond(30),
+            month_day: 31.into(),
+            week_day: 5.into(),
+            hour: 12.into(),
+            minuter: 30.into(),
+            second: 30.into(),
         };
         {
             let dist: DateTime = conf._next(dt0)?.into();
             let mut dt0_dist = dist.clone();
-            dt0_dist.second = InnerSecond(0);
-            dt0_dist.minuter = InnerMinuter(30);
-            dt0_dist.hour = InnerHour(12);
-            dt0_dist.week_day = InnerWeekDay(4);
-            dt0_dist.month_day = InnerMonthDay(31);
+            dt0_dist.second = 0.into();
+            dt0_dist.minuter = 30.into();
+            dt0_dist.hour = 12.into();
+            dt0_dist.week_day = 4.into();
+            dt0_dist.month_day = 31.into();
             assert!(dist == dt0_dist, "{:?}", dist);
             assert!(dist.date.year() == 2022, "{:?}", dist.date);
             assert!(dist.date.month() == 3, "{:?}", dist.date);
