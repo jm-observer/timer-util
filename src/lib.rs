@@ -134,41 +134,17 @@ impl Operator for MonthDays {
         self.0 = val
     }
 }
-impl Operator for WeekDays {
-    const MIN: Self::ValTy = 1;
-    const MAX: Self::ValTy = 7;
-    const ONE: Self::ValTy = 1;
-    const ZERO: Self::ValTy = 0;
-    const DEFAULT_MAX: Self::ValTy = u8::MAX << 1;
-    type ValTy = u8;
-    type DataTy = WeekDay;
-
-    fn _default() -> Self {
-        Self(0)
-    }
-
-    fn next(&self, index: Self::DataTy) -> Option<Self::DataTy> {
-        self._next(index)
-            .and_then(|x| Some(Self::DataTy::from_data(x)))
-    }
-
-    fn min_val(&self) -> Self::DataTy {
-        Self::DataTy::from_data(self._min_val())
-    }
-
-    fn _val(&self) -> Self::ValTy {
-        self.0
-    }
-    fn _val_mut(&mut self, val: Self::ValTy) {
-        self.0 = val
-    }
-}
 
 pub trait Operator: Sized {
+    /// 最小值：比如星期配置，则最小为星期1，即为1
     const MIN: Self::ValTy;
+    /// 最大值：比如星期配置，则最大为星期日，即为7
     const MAX: Self::ValTy;
+    /// 单位值：好像全为1
     const ONE: Self::ValTy;
+    /// 0值：即全不选的值，比如星期7天都不选，则为二进制0000 0000
     const ZERO: Self::ValTy;
+    /// 满值：即全选的值，比如星期7天全选，则为二进制1111 1110
     const DEFAULT_MAX: Self::ValTy;
     type ValTy: BitOr<Output = Self::ValTy>
         + Shl<Output = Self::ValTy>
@@ -240,6 +216,12 @@ pub trait Operator: Sized {
         Ok(self)
     }
 
+    fn merge(&self, other: &Self) -> Self {
+        let mut new = Self::_default();
+        new._val_mut(self._val() | other._val());
+        new
+    }
+
     fn to_vec(&self) -> Vec<Self::ValTy> {
         let mut res = Vec::new();
         let val = self._val();
@@ -285,6 +267,135 @@ pub trait Operator: Sized {
     }
     fn _val(&self) -> Self::ValTy;
     fn _val_mut(&mut self, val: Self::ValTy);
+}
+
+// impl Operator for WeekDays {
+//     const MIN: Self::ValTy = 1;
+//     const MAX: Self::ValTy = 7;
+//     const ONE: Self::ValTy = 1;
+//     const ZERO: Self::ValTy = 0;
+//     const DEFAULT_MAX: Self::ValTy = u8::MAX << 1;
+//     type ValTy = u8;
+//     type DataTy = WeekDay;
+//
+//     fn _default() -> Self {
+//         Self(0)
+//     }
+//
+//     fn next(&self, index: Self::DataTy) -> Option<Self::DataTy> {
+//         self._next(index)
+//             .and_then(|x| Some(Self::DataTy::from_data(x)))
+//     }
+//
+//     fn min_val(&self) -> Self::DataTy {
+//         Self::DataTy::from_data(self._min_val())
+//     }
+//
+//     fn _val(&self) -> Self::ValTy {
+//         self.0
+//     }
+//     fn _val_mut(&mut self, val: Self::ValTy) {
+//         self.0 = val
+//     }
+// }
+impl WeekDays {
+    const DEFAULT_MAX: u8 = u8::MAX << 1;
+    const ONE: u8 = 1;
+    const ZERO: u8 = 0;
+    const MIN: u8 = 1;
+    const MAX: u8 = 7;
+
+    fn to_month_days(&self, start: WeekDay, max: MonthDay) -> MonthDays {
+        let mut next = Some(WeekArray::init(start, max.as_data() as i8));
+        let conf_week_days = self.to_vec();
+
+        let mut monthdays = MonthDays::_default();
+        while let Some(ref weekday) = next {
+            for x in &conf_week_days {
+                if let Some(day) = weekday.day(*x) {
+                    monthdays = monthdays.add(MonthDay::from_data(day));
+                }
+            }
+        }
+        monthdays
+    }
+
+    fn _default() -> Self {
+        Self(0)
+    }
+    #[inline]
+    fn default_value(val: WeekDay) -> Self {
+        let ins = Self::_default();
+        ins.add(val)
+    }
+    #[inline]
+    fn default_range(range: impl RangeBounds<WeekDay>) -> Result<Self> {
+        let ins = Self::_default();
+        ins.add_range(range)
+    }
+    #[inline]
+    fn default_all() -> Self {
+        let mut ins = Self::_default();
+        ins._val_mut(Self::DEFAULT_MAX);
+        ins
+    }
+    fn default_array(vals: &[WeekDay]) -> Self {
+        let ins = Self::_default();
+        ins.add_array(vals)
+    }
+    fn add_array(mut self, vals: &[WeekDay]) -> Self {
+        let mut val = self._val();
+        for i in vals {
+            val |= Self::ONE << i.as_data();
+        }
+        self._val_mut(val);
+        self
+    }
+    fn add(mut self, index: WeekDay) -> Self {
+        let index = index.as_data();
+        self._val_mut(self._val() | (Self::ONE << index));
+        self
+    }
+    fn add_range(mut self, range: impl RangeBounds<WeekDay>) -> Result<Self> {
+        let mut first = match range.start_bound() {
+            Bound::Unbounded => Self::MIN,
+            Bound::Included(first) => first.as_data(),
+            Bound::Excluded(first) => first.as_data() + Self::ONE,
+        };
+        let end = match range.end_bound() {
+            Bound::Unbounded => Self::MAX,
+            Bound::Included(end) => end.as_data(),
+            Bound::Excluded(end) => end.as_data() - Self::ONE,
+        };
+        if first > end {
+            bail!("error:{} > {}", first, end);
+        }
+        let mut val = self._val();
+        while first <= end {
+            val |= Self::ONE << first;
+            first += Self::ONE;
+        }
+        self._val_mut(val);
+        Ok(self)
+    }
+    fn to_vec(&self) -> Vec<usize> {
+        let mut res = Vec::new();
+        let val = self._val();
+        let mut first = Self::MIN;
+        while first <= Self::MAX {
+            if (val & (Self::ONE << first)) > Self::ZERO {
+                res.push((first - 1) as usize);
+            }
+            first += Self::ONE;
+        }
+        res
+    }
+    fn _val_mut(&mut self, val: u8) {
+        todo!()
+    }
+    fn _val(&self) -> u8 {
+        self.0
+    }
 }
 
 pub struct DayConfBuilder {
@@ -381,140 +492,141 @@ impl DayHourMinuterSecondConf {
         Ok(times)
     }
     fn _next(&self, datetime: DateTime) -> Result<NaiveDateTime> {
-        let day_self = self
-            .month_days
-            .as_ref()
-            .map_or(false, |x| x.contain(datetime.month_day))
-            || self
-                .week_days
-                .as_ref()
-                .map_or(false, |x| x.contain(datetime.week_day));
-
-        let hour_self = self.hours.contain(datetime.hour);
-        let minuter_self = self.minuters.contain(datetime.minuter);
-
-        let (mut day_possible, mut hour_possible, mut minuter_possible, mut second_possible) =
-            if day_self {
-                if hour_self {
-                    if minuter_self {
-                        (
-                            Possible::Oneself,
-                            Possible::Oneself,
-                            Possible::Oneself,
-                            Possible::Next,
-                        )
-                    } else {
-                        (
-                            Possible::Oneself,
-                            Possible::Oneself,
-                            Possible::Next,
-                            Possible::Min,
-                        )
-                    }
-                } else {
-                    (
-                        Possible::Oneself,
-                        Possible::Next,
-                        Possible::Min,
-                        Possible::Min,
-                    )
-                }
-            } else {
-                (Possible::Next, Possible::Min, Possible::Min, Possible::Min)
-            };
-        let (second, second_recount) = get_val(second_possible, &self.seconds, datetime.second);
-        if second_recount {
-            second_possible = Possible::Min;
-            minuter_possible = Possible::Next;
-        }
-        let (minuter, minuter_recount) =
-            get_val(minuter_possible, &self.minuters, datetime.minuter);
-        if minuter_recount {
-            minuter_possible = Possible::Min;
-            hour_possible = Possible::Next;
-        }
-        let (hour, hour_recount) = get_val(hour_possible, &self.hours, datetime.hour);
-        if hour_recount {
-            hour_possible = Possible::Min;
-            day_possible = Possible::Next;
-        }
-        trace!(
-            "{:?} {:?} {:?} {:?}",
-            day_possible,
-            hour_possible,
-            minuter_possible,
-            second_possible
-        );
-        let day_week_possible = day_possible;
-        let time_next = NaiveTime::from_hms(hour, minuter as u32, second as u32);
+        todo!()
+        // let day_self = self
+        //     .month_days
+        //     .as_ref()
+        //     .map_or(false, |x| x.contain(datetime.month_day))
+        //     || self
+        //         .week_days
+        //         .as_ref()
+        //         .map_or(false, |x| x.contain(datetime.week_day));
         //
-        let date_month = if let Some(month_days) = &self.month_days {
-            // 计算月日期的下个日期
-            let (mut month_day, month_day_recount) =
-                get_val(day_possible, month_days, datetime.month_day);
-            let year = datetime.date.year();
-            let month = datetime.date.month();
-            trace!(
-                "{:?} {:?} {:?} {:?}",
-                month_day,
-                month_day_recount,
-                day_possible,
-                datetime.month_day
-            );
-            if !month_day_recount {
-                // 这个月的日期：
-                if let Some(date) = NaiveDate::from_ymd_opt(year, month, month_day) {
-                    Some(date)
-                } else {
-                    day_possible = Possible::Min;
-                    month_day = month_days._min_val();
-                    // 下个月：月数+1，年也许也要加+1
-                    Some(add_month(year, month, month_day)?)
-                }
-            } else {
-                // 下个月：月数+1，年也许也要加+1
-                Some(add_month(year, month, month_day)?)
-            }
-        } else {
-            None
-        };
-        let date_week = if let Some(week_days) = &self.week_days {
-            let (week_day, week_day_recount) =
-                get_val(day_week_possible, week_days, datetime.week_day);
-            trace!(
-                "week: {:?} {:?} {:?} {:?}",
-                week_day,
-                day_week_possible,
-                datetime.week_day,
-                week_day_recount
-            );
-            if week_day_recount {
-                let mut date = datetime.date.clone();
-                date += Duration::days((week_day + 7 - datetime.week_day.as_data()) as i64);
-                Some(date)
-            } else {
-                let mut date = datetime.date.clone();
-                date += Duration::days((week_day - datetime.week_day.as_data()) as i64);
-                Some(date)
-            }
-        } else {
-            None
-        };
-        trace!("{:?} {:?}", date_month, date_week);
-        let date = if let Some(date_month) = date_month {
-            if let Some(date_week) = date_week {
-                if date_month > date_week {
-                    date_week
-                } else {
-                    date_month
-                }
-            } else {
-                date_month
-            }
-        } else {
-            date_week.unwrap()
-        };
-        Ok(NaiveDateTime::new(date, time_next))
+        // let hour_self = self.hours.contain(datetime.hour);
+        // let minuter_self = self.minuters.contain(datetime.minuter);
+        //
+        // let (mut day_possible, mut hour_possible, mut minuter_possible, mut second_possible) =
+        //     if day_self {
+        //         if hour_self {
+        //             if minuter_self {
+        //                 (
+        //                     Possible::Oneself,
+        //                     Possible::Oneself,
+        //                     Possible::Oneself,
+        //                     Possible::Next,
+        //                 )
+        //             } else {
+        //                 (
+        //                     Possible::Oneself,
+        //                     Possible::Oneself,
+        //                     Possible::Next,
+        //                     Possible::Min,
+        //                 )
+        //             }
+        //         } else {
+        //             (
+        //                 Possible::Oneself,
+        //                 Possible::Next,
+        //                 Possible::Min,
+        //                 Possible::Min,
+        //             )
+        //         }
+        //     } else {
+        //         (Possible::Next, Possible::Min, Possible::Min, Possible::Min)
+        //     };
+        // let (second, second_recount) = get_val(second_possible, &self.seconds, datetime.second);
+        // if second_recount {
+        //     second_possible = Possible::Min;
+        //     minuter_possible = Possible::Next;
+        // }
+        // let (minuter, minuter_recount) =
+        //     get_val(minuter_possible, &self.minuters, datetime.minuter);
+        // if minuter_recount {
+        //     minuter_possible = Possible::Min;
+        //     hour_possible = Possible::Next;
+        // }
+        // let (hour, hour_recount) = get_val(hour_possible, &self.hours, datetime.hour);
+        // if hour_recount {
+        //     hour_possible = Possible::Min;
+        //     day_possible = Possible::Next;
+        // }
+        // trace!(
+        //     "{:?} {:?} {:?} {:?}",
+        //     day_possible,
+        //     hour_possible,
+        //     minuter_possible,
+        //     second_possible
+        // );
+        // let day_week_possible = day_possible;
+        // let time_next = NaiveTime::from_hms(hour, minuter as u32, second as u32);
+        // //
+        // let date_month = if let Some(month_days) = &self.month_days {
+        //     // 计算月日期的下个日期
+        //     let (mut month_day, month_day_recount) =
+        //         get_val(day_possible, month_days, datetime.month_day);
+        //     let year = datetime.date.year();
+        //     let month = datetime.date.month();
+        //     trace!(
+        //         "{:?} {:?} {:?} {:?}",
+        //         month_day,
+        //         month_day_recount,
+        //         day_possible,
+        //         datetime.month_day
+        //     );
+        //     if !month_day_recount {
+        //         // 这个月的日期：
+        //         if let Some(date) = NaiveDate::from_ymd_opt(year, month, month_day) {
+        //             Some(date)
+        //         } else {
+        //             day_possible = Possible::Min;
+        //             month_day = month_days._min_val();
+        //             // 下个月：月数+1，年也许也要加+1
+        //             Some(add_month(year, month, month_day)?)
+        //         }
+        //     } else {
+        //         // 下个月：月数+1，年也许也要加+1
+        //         Some(add_month(year, month, month_day)?)
+        //     }
+        // } else {
+        //     None
+        // };
+        // let date_week = if let Some(week_days) = &self.week_days {
+        //     let (week_day, week_day_recount) =
+        //         get_val(day_week_possible, week_days, datetime.week_day);
+        //     trace!(
+        //         "week: {:?} {:?} {:?} {:?}",
+        //         week_day,
+        //         day_week_possible,
+        //         datetime.week_day,
+        //         week_day_recount
+        //     );
+        //     if week_day_recount {
+        //         let mut date = datetime.date.clone();
+        //         date += Duration::days((week_day + 7 - datetime.week_day.as_data()) as i64);
+        //         Some(date)
+        //     } else {
+        //         let mut date = datetime.date.clone();
+        //         date += Duration::days((week_day - datetime.week_day.as_data()) as i64);
+        //         Some(date)
+        //     }
+        // } else {
+        //     None
+        // };
+        // trace!("{:?} {:?}", date_month, date_week);
+        // let date = if let Some(date_month) = date_month {
+        //     if let Some(date_week) = date_week {
+        //         if date_month > date_week {
+        //             date_week
+        //         } else {
+        //             date_month
+        //         }
+        //     } else {
+        //         date_month
+        //     }
+        // } else {
+        //     date_week.unwrap()
+        // };
+        // Ok(NaiveDateTime::new(date, time_next))
     }
 }
 ///
@@ -637,6 +749,61 @@ impl Debug for WeekDays {
         }
     }
 }
+
+#[derive(Eq, PartialEq, Debug)]
+struct WeekArray {
+    days: [i8; 7],
+    max: i8,
+}
+impl WeekArray {
+    fn init(start: WeekDay, max: i8) -> Self {
+        let mut init_week = [1i8; 7];
+        if start.as_data() >= 2 {
+            let mut index = (start.as_data() - 2) as usize;
+            let mut diff = 1;
+            loop {
+                init_week[index] -= diff;
+                diff += 1;
+                if index == 0 {
+                    break;
+                }
+                index -= 1;
+            }
+        }
+        let mut index = (start.as_data()) as usize;
+        let mut diff = 1;
+        while index < 7 {
+            init_week[index] += diff;
+            diff += 1;
+            index += 1;
+        }
+        Self {
+            days: init_week,
+            max,
+        }
+    }
+
+    fn day(&self, index: usize) -> Option<u32> {
+        let day = self.days[index];
+        if day > 0 && day <= self.max {
+            Some(day as u32)
+        } else {
+            None
+        }
+    }
+
+    fn next(self) -> Option<Self> {
+        let Self { mut days, max } = self;
+        for i in days.iter_mut() {
+            *i = *i + 7;
+        }
+        if days[0] > max {
+            None
+        } else {
+            Some(Self { days, max })
+        }
+    }
+}
 #[cfg(test)]
 mod test {
     use super::{get_val, DayHourMinuterSecondConf, Possible};
@@ -647,6 +814,108 @@ mod test {
     use chrono::{Datelike, NaiveDate};
     use log::LevelFilter;
 
+    #[test]
+    fn test_init_first_week() {
+        assert_eq!(
+            WeekArray::init(W3, 31),
+            WeekArray {
+                days: [-1, 0, 1, 2, 3, 4, 5],
+                max: 31
+            }
+        );
+        assert_eq!(
+            WeekArray::init(W1, 31),
+            WeekArray {
+                days: [1, 2, 3, 4, 5, 6, 7],
+                max: 31
+            }
+        );
+        assert_eq!(
+            WeekArray::init(W7, 31),
+            WeekArray {
+                days: [-5, -4, -3, -2, -1, 0, 1],
+                max: 31
+            }
+        );
+        {
+            let next = WeekArray::init(W7, 31).next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [2, 3, 4, 5, 6, 7, 8]);
+
+            let next = next.next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [9, 10, 11, 12, 13, 14, 15]);
+
+            let next = next.next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [16, 17, 18, 19, 20, 21, 22]);
+
+            let next = next.next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [23, 24, 25, 26, 27, 28, 29]);
+
+            let next = next.next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [30, 31, 32, 33, 34, 35, 36]);
+
+            let next = next.next();
+            assert!(next.is_none());
+        }
+        {
+            let next = WeekArray::init(W3, 31).next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [6, 7, 8, 9, 10, 11, 12]);
+
+            let next = next.next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [13, 14, 15, 16, 17, 18, 19]);
+
+            let next = next.next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [20, 21, 22, 23, 24, 25, 26]);
+
+            let next = next.next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [27, 28, 29, 30, 31, 32, 33]);
+
+            let next = next.next();
+            assert!(next.is_none());
+        }
+
+        {
+            let next = WeekArray::init(W1, 31).next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [8, 9, 10, 11, 12, 13, 14]);
+
+            let next = next.next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [15, 16, 17, 18, 19, 20, 21]);
+
+            let next = next.next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [22, 23, 24, 25, 26, 27, 28]);
+
+            let next = next.next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [29, 30, 31, 32, 33, 34, 35]);
+
+            let next = next.next();
+            assert!(next.is_none());
+        }
+    }
     #[test]
     fn test_get_val() -> Result<()> {
         let some_seconds = Seconds::default_range(Second::S10..Second::S30)?

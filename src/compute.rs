@@ -60,6 +60,16 @@ impl<T: Operator> Computer for TimeUnit<T> {
 }
 
 impl<T: Operator> TimeUnit<T> {
+    fn new(index: T::DataTy, conf: T) -> Self {
+        let val = index;
+        Self {
+            max: T::MAX,
+            index,
+            conf,
+            val: val.as_data(),
+        }
+    }
+
     fn conf(&self) -> &T {
         &self.conf
     }
@@ -132,18 +142,6 @@ impl Computer for DayUnit {
 
     fn val(&self) -> Self::ValTy {
         todo!()
-    }
-}
-
-impl<T: Operator> TimeUnit<T> {
-    fn new(index: T::DataTy, conf: T) -> Self {
-        let val = index;
-        Self {
-            max: T::MAX,
-            index,
-            conf,
-            val: val.as_data(),
-        }
     }
 }
 
