@@ -305,8 +305,8 @@ impl WeekDays {
     const MIN: u8 = 1;
     const MAX: u8 = 7;
 
-    fn to_month_days(&self, start: WeekDay, max: MonthDay) -> MonthDays {
-        let mut next = Some(WeekArray::init(start, max.as_data() as i8));
+    fn to_month_days(&self, start: WeekDay) -> MonthDays {
+        let mut next = Some(WeekArray::init(start));
         let conf_week_days = self.to_vec();
 
         let mut monthdays = MonthDays::_default();
@@ -316,6 +316,7 @@ impl WeekDays {
                     monthdays = monthdays.add(MonthDay::from_data(day));
                 }
             }
+            next = weekday.next();
         }
         monthdays
     }
@@ -391,7 +392,7 @@ impl WeekDays {
         res
     }
     fn _val_mut(&mut self, val: u8) {
-        todo!()
+        self.0 = val;
     }
     fn _val(&self) -> u8 {
         self.0
@@ -753,10 +754,10 @@ impl Debug for WeekDays {
 #[derive(Eq, PartialEq, Debug)]
 struct WeekArray {
     days: [i8; 7],
-    max: i8,
+    // max: i8,
 }
 impl WeekArray {
-    fn init(start: WeekDay, max: i8) -> Self {
+    fn init(start: WeekDay) -> Self {
         let mut init_week = [1i8; 7];
         if start.as_data() >= 2 {
             let mut index = (start.as_data() - 2) as usize;
@@ -779,28 +780,28 @@ impl WeekArray {
         }
         Self {
             days: init_week,
-            max,
+            // max,
         }
     }
 
     fn day(&self, index: usize) -> Option<u32> {
         let day = self.days[index];
-        if day > 0 && day <= self.max {
+        if day > 0 && day <= 31 {
             Some(day as u32)
         } else {
             None
         }
     }
 
-    fn next(self) -> Option<Self> {
-        let Self { mut days, max } = self;
+    fn next(&self) -> Option<Self> {
+        let mut days = self.days;
         for i in days.iter_mut() {
             *i = *i + 7;
         }
-        if days[0] > max {
+        if days[0] > 31 {
             None
         } else {
-            Some(Self { days, max })
+            Some(Self { days })
         }
     }
 }
@@ -815,30 +816,49 @@ mod test {
     use log::LevelFilter;
 
     #[test]
+    fn test_to_month_days() {
+        custom_utils::logger::logger_stdout_debug();
+        let month_days0 = WeekDays::default_array(&[W1, W3, W5, W7]).to_month_days(W3);
+        assert_eq!(
+            month_days0.to_vec(),
+            vec![1, 3, 5, 6, 8, 10, 12, 13, 15, 17, 19, 20, 22, 24, 26, 27, 29, 31]
+        );
+
+        let month_days1 = WeekDays::default_array(&[W1, W3, W5]).to_month_days(W1);
+        assert_eq!(
+            month_days1.to_vec(),
+            vec![1, 3, 5, 8, 10, 12, 15, 17, 19, 22, 24, 26, 29, 31]
+        );
+        let month_days2 = month_days0.merge(&month_days1);
+        assert_eq!(
+            month_days2.to_vec(),
+            vec![1, 3, 5, 6, 8, 10, 12, 13, 15, 17, 19, 20, 22, 24, 26, 27, 29, 31]
+        );
+        // debug!("{:?}", month_days.to_vec());
+    }
+
+    #[test]
     fn test_init_first_week() {
         assert_eq!(
-            WeekArray::init(W3, 31),
+            WeekArray::init(W3),
             WeekArray {
                 days: [-1, 0, 1, 2, 3, 4, 5],
-                max: 31
             }
         );
         assert_eq!(
-            WeekArray::init(W1, 31),
+            WeekArray::init(W1),
             WeekArray {
                 days: [1, 2, 3, 4, 5, 6, 7],
-                max: 31
             }
         );
         assert_eq!(
-            WeekArray::init(W7, 31),
+            WeekArray::init(W7),
             WeekArray {
                 days: [-5, -4, -3, -2, -1, 0, 1],
-                max: 31
             }
         );
         {
-            let next = WeekArray::init(W7, 31).next();
+            let next = WeekArray::init(W7).next();
             assert!(next.is_some());
             let next = next.unwrap();
             assert_eq!(next.days, [2, 3, 4, 5, 6, 7, 8]);
@@ -867,7 +887,7 @@ mod test {
             assert!(next.is_none());
         }
         {
-            let next = WeekArray::init(W3, 31).next();
+            let next = WeekArray::init(W3).next();
             assert!(next.is_some());
             let next = next.unwrap();
             assert_eq!(next.days, [6, 7, 8, 9, 10, 11, 12]);
@@ -892,7 +912,7 @@ mod test {
         }
 
         {
-            let next = WeekArray::init(W1, 31).next();
+            let next = WeekArray::init(W1).next();
             assert!(next.is_some());
             let next = next.unwrap();
             assert_eq!(next.days, [8, 9, 10, 11, 12, 13, 14]);

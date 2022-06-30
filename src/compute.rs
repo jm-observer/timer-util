@@ -1,4 +1,5 @@
-use crate::{AsData, MonthDay, MonthDays, Operator, Second, Seconds, WeekDay, WeekDays};
+use crate::{AsData, Hours, Minuters, MonthDay, MonthDays, Operator, Seconds, WeekDay, WeekDays};
+use chrono::{Datelike, NaiveDate};
 
 struct TimeUnit<T: Operator> {
     // 最大值
@@ -11,10 +12,26 @@ struct TimeUnit<T: Operator> {
     val: T::ValTy,
 }
 
+struct DayUnit {
+    // 当前的起始值
+    year: i32,
+    // 最后的值
+    month: u32,
+    monthdays: Option<MonthDays>,
+    weekdays: Option<WeekDays>,
+    day: MonthDay,
+    max: u32,
+    conf: MonthDays,
+    val: u32,
+}
+
 pub trait Computer {
     const MIN: Self::ValTy;
     type ValTy;
     type DataTy;
+
+    /// 下个循环的第一个符合值
+    fn update_to_next_ring(&mut self);
 
     fn is_match(&self) -> bool;
     // 因为结果可能用来赋值，因此用DataTy，可以避免Result。不包含index
@@ -22,6 +39,67 @@ pub trait Computer {
     fn min_val(&self) -> Self::DataTy;
     fn val_mut(&mut self, val: Self::DataTy);
     fn val(&self) -> Self::ValTy;
+}
+
+impl Computer for DayUnit {
+    const MIN: Self::ValTy = 1;
+    type ValTy = u32;
+    type DataTy = MonthDay;
+
+    fn update_to_next_ring(&mut self) {
+        if self.month == 12 {
+            self.month = 1;
+            self.year += 1;
+        } else {
+            self.month += 1;
+        }
+        let date = NaiveDate::from_ymd(self.year, self.month, 1);
+        let weekday: WeekDay = date.weekday().into();
+
+        self.conf = if let Some(ref weekdays) = self.weekdays {
+            let week_monthdays = weekdays.to_month_days(weekday);
+            if let Some(ref monthdays) = self.monthdays {
+                monthdays.merge(monthdays)
+            } else {
+                week_monthdays
+            }
+        } else if let Some(ref monthdays) = self.monthdays {
+            monthdays.clone()
+        } else {
+            unreachable!("")
+        };
+        self.max = date.day();
+        self.day = self.min_val();
+        self.val = self.day.as_data();
+    }
+
+    fn is_match(&self) -> bool {
+        self.conf.contain(self.day)
+    }
+
+    fn next_val(&self) -> Option<Self::DataTy> {
+        if let Some(next) = self.conf.next(self.day) {
+            if next.as_data() > self.max {
+                None
+            } else {
+                Some(next)
+            }
+        } else {
+            None
+        }
+    }
+
+    fn min_val(&self) -> Self::DataTy {
+        self.conf.min_val()
+    }
+
+    fn val_mut(&mut self, val: Self::DataTy) {
+        self.day = val;
+    }
+
+    fn val(&self) -> Self::ValTy {
+        self.day.as_data()
+    }
 }
 
 // impl<T: Operator> TimeUnit<T> {
@@ -40,6 +118,11 @@ impl<T: Operator> Computer for TimeUnit<T> {
     const MIN: Self::ValTy = <T as Operator>::MIN;
     type ValTy = <T as Operator>::ValTy;
     type DataTy = T::DataTy;
+
+    fn update_to_next_ring(&mut self) {
+        self.index = self.conf.min_val();
+        self.val = self.index.as_data();
+    }
 
     fn is_match(&self) -> bool {
         self.conf().contain(self.index())
@@ -78,86 +161,97 @@ impl<T: Operator> TimeUnit<T> {
         self.index
     }
 }
+//
+// fn option_min<T: PartialOrd>(a: Option<T>, b: Option<T>) -> Option<T> {
+//     if let Some(a) = a {
+//         if let Some(b) = b {
+//             if b > a {
+//                 Some(a)
+//             } else {
+//                 Some(b)
+//             }
+//         } else {
+//             Some(a)
+//         }
+//     } else {
+//         b
+//     }
+// }
 
-struct DayUnit {
-    // 最大值
-    max: u32,
-    // 当前的起始值
-    index: u32,
-    index_week_day: u8,
-    // 对应的配置
-    month_day_conf: MonthDays,
-    week_day_conf: WeekDays,
-    // 最后的值
-    val: u32,
+struct Composition {
+    day: DayUnit,
+    hour: TimeUnit<Hours>,
+    minuter: TimeUnit<Minuters>,
+    second: TimeUnit<Seconds>,
 }
 
-impl Computer for DayUnit {
-    const MIN: Self::ValTy = 1;
-    type ValTy = u32;
-    type DataTy = MonthDay;
-
-    fn is_match(&self) -> bool {
-        todo!()
-        // self.month_day_conf.contain(self.index.into())
-        //     || self.week_day_conf.contain(self.index_week_day.into())
-    }
-
-    fn next_val(&self) -> Option<Self::DataTy> {
-        todo!()
-        // let next_month_day = self.month_day_conf.next(self.index.into()).and_then(|x| {
-        //     if x > self.max {
-        //         None
-        //     } else {
-        //         Some(x)
-        //     }
-        // });
-        // let next_week_day = self
-        //     .week_day_conf
-        //     .next(self.index_week_day.into())
-        //     .and_then(|x| Some(self.index + ((x - self.index_week_day) as u32)))
-        //     .or_else(|| {
-        //         // 日差
-        //         let weekday = 7 - self.index_week_day + self.week_day_conf.min_val();
-        //         Some(self.index + (weekday as u32))
-        //     })
-        //     .and_then(|x| {
-        //         // 判断是否超过本月末
-        //         if x > self.max {
-        //             None
-        //         } else {
-        //             Some(x)
-        //         }
-        //     });
-        // option_min(next_month_day, next_week_day)
-    }
-
-    fn min_val(&self) -> Self::DataTy {
-        todo!()
-    }
-
-    fn val_mut(&mut self, val: Self::DataTy) {
-        todo!()
-    }
-
-    fn val(&self) -> Self::ValTy {
-        todo!()
-    }
-}
-
-fn option_min<T: PartialOrd>(a: Option<T>, b: Option<T>) -> Option<T> {
-    if let Some(a) = a {
-        if let Some(b) = b {
-            if b > a {
-                Some(a)
-            } else {
-                Some(b)
+impl Composition {
+    pub fn next(&mut self) {
+        if self.day.is_match() {
+            if self.match_hour() {
+                return;
             }
-        } else {
-            Some(a)
         }
-    } else {
-        b
+        self.next_day();
+    }
+    fn match_hour(&mut self) -> bool {
+        if self.hour.is_match() {
+            if self.match_minuter() {
+                return true;
+            }
+        }
+        if let Some(hour) = self.hour.next_val() {
+            self.hour.val_mut(hour);
+            self.minuter_update_to_next_ring();
+            true
+        } else {
+            false
+        }
+    }
+    fn match_minuter(&mut self) -> bool {
+        if self.minuter.is_match() {
+            if self.match_second() {
+                return true;
+            }
+        }
+        if let Some(minuter) = self.minuter.next_val() {
+            self.minuter.val_mut(minuter);
+            self.second_update_to_next_ring();
+            true
+        } else {
+            false
+        }
+    }
+    fn match_second(&mut self) -> bool {
+        if self.second.is_match() {
+            return true;
+        }
+        if let Some(hour) = self.second.next_val() {
+            self.second.val_mut(hour);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn next_day(&mut self) {
+        if let Some(day) = self.day.next_val() {
+            self.day.val_mut(day);
+        } else {
+            self.day.update_to_next_ring();
+        }
+        self.hour_update_to_next_ring();
+    }
+    fn hour_update_to_next_ring(&mut self) {
+        self.hour.update_to_next_ring();
+        self.minuter_update_to_next_ring();
+    }
+    fn minuter_update_to_next_ring(&mut self) {
+        self.minuter.update_to_next_ring();
+        self.second_update_to_next_ring();
+    }
+    fn second_update_to_next_ring(&mut self) {
+        self.second.update_to_next_ring();
     }
 }
 
@@ -202,13 +296,13 @@ mod test {
         }
     }
 
-    #[test]
-    fn test_option_min() {
-        assert_eq!(option_min(Some(1), Some(2)), Some(1));
-        assert_eq!(option_min(Some(1), None), Some(1));
-        assert_eq!(option_min(None, Some(2)), Some(2));
-        assert_eq!(option_min(Some(1), Some(1)), Some(1));
-        assert_eq!(option_min(Some(2), Some(1)), Some(1));
-        assert_eq!(option_min::<u32>(None, None), None);
-    }
+    // #[test]
+    // fn test_option_min() {
+    //     assert_eq!(option_min(Some(1), Some(2)), Some(1));
+    //     assert_eq!(option_min(Some(1), None), Some(1));
+    //     assert_eq!(option_min(None, Some(2)), Some(2));
+    //     assert_eq!(option_min(Some(1), Some(1)), Some(1));
+    //     assert_eq!(option_min(Some(2), Some(1)), Some(1));
+    //     assert_eq!(option_min::<u32>(None, None), None);
+    // }
 }
