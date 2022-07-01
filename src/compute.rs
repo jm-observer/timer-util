@@ -1,4 +1,6 @@
-use crate::{AsData, Hours, Minuters, MonthDay, MonthDays, Operator, Seconds, WeekDay, WeekDays};
+use crate::conf::{Hours, Minuters, MonthDays, Seconds, WeekDays};
+use crate::data::{MonthDay, WeekDay};
+use crate::traits::{AsData, Computer, Operator};
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime};
 use log::debug;
 
@@ -27,41 +29,30 @@ pub struct DayUnit {
     val: u32,
 }
 
-pub trait Computer {
-    const MIN: Self::ValTy;
-    type ValTy;
-    type DataTy;
-
-    /// 下个循环的第一个符合值
-    fn update_to_next_ring(&mut self);
-
-    fn is_match(&self) -> bool;
-    // 因为结果可能用来赋值，因此用DataTy，可以避免Result。不包含index
-    fn next_val(&self) -> Option<Self::DataTy>;
-    fn min_val(&self) -> Self::DataTy;
-    fn val_mut(&mut self, val: Self::DataTy);
-    fn val(&self) -> Self::ValTy;
-}
-
 impl Computer for DayUnit {
     const MIN: Self::ValTy = 1;
     type ValTy = u32;
     type DataTy = MonthDay;
 
     fn update_to_next_ring(&mut self) {
-        if self.month == 12 {
-            self.month = 1;
-            self.year += 1;
-        } else {
-            self.month += 1;
+        loop {
+            if self.month == 12 {
+                self.month = 1;
+                self.year += 1;
+            } else {
+                self.month += 1;
+            }
+            let date = NaiveDate::from_ymd(self.year, self.month, 1);
+            let next_month = next_month(self.year, self.month);
+            let weekday: WeekDay = date.weekday().into();
+            self.conf = merge_days_conf(self.monthdays.clone(), self.weekdays.clone(), weekday);
+            self.max = next_month.pred().day();
+            self.day = self.conf.min_val();
+            if self.day.as_data() <= self.max {
+                self.val = self.day.as_data();
+                break;
+            }
         }
-        let date = NaiveDate::from_ymd(self.year, self.month, 1);
-        let next_month = next_month(self.year, self.month);
-        let weekday: WeekDay = date.weekday().into();
-        self.conf = merge_days_conf(self.monthdays.clone(), self.weekdays.clone(), weekday);
-        self.max = next_month.pred().day();
-        self.day = self.conf.min_val();
-        self.val = self.day.as_data();
     }
 
     fn is_match(&self) -> bool {
@@ -220,12 +211,14 @@ impl Composition {
     }
 
     pub fn next(&mut self) -> NaiveDateTime {
-        if self.day.is_match() {
-            if self.match_hour() {
-                return self.to_datetime();
+        loop {
+            if self.day.is_match() {
+                if self.match_hour() {
+                    break;
+                }
             }
+            self.next_day();
         }
-        self.next_day();
         self.to_datetime()
     }
     fn to_datetime(&self) -> NaiveDateTime {
@@ -284,8 +277,8 @@ impl Composition {
             self.day.val_mut(day);
         } else {
             self.day.update_to_next_ring();
-            debug!("day_unit: {:?}", self.day);
         }
+        debug!("day_unit: {:?}", self.day);
         self.hour_update_to_next_ring();
     }
     fn hour_update_to_next_ring(&mut self) {
@@ -311,10 +304,66 @@ pub fn next_month(mut year: i32, mut month: u32) -> NaiveDate {
     NaiveDate::from_ymd(year, month, 1)
 }
 
+#[derive(Eq, PartialEq, Debug)]
+pub struct WeekArray {
+    pub(crate) days: [i8; 7],
+}
+impl WeekArray {
+    pub(crate) fn init(start: WeekDay) -> Self {
+        let mut init_week = [1i8; 7];
+        if start.as_data() >= 2 {
+            let mut index = (start.as_data() - 2) as usize;
+            let mut diff = 1;
+            loop {
+                init_week[index] -= diff;
+                diff += 1;
+                if index == 0 {
+                    break;
+                }
+                index -= 1;
+            }
+        }
+        let mut index = (start.as_data()) as usize;
+        let mut diff = 1;
+        while index < 7 {
+            init_week[index] += diff;
+            diff += 1;
+            index += 1;
+        }
+        Self {
+            days: init_week,
+            // max,
+        }
+    }
+
+    pub(crate) fn day(&self, index: usize) -> Option<u32> {
+        let day = self.days[index];
+        if day > 0 && day <= 31 {
+            Some(day as u32)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn next(&self) -> Option<Self> {
+        let mut days = self.days;
+        for i in days.iter_mut() {
+            *i = *i + 7;
+        }
+        if days[0] > 31 {
+            None
+        } else {
+            Some(Self { days })
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::*;
+    use crate::data::Second::*;
+    use crate::traits::Computer;
+
     #[test]
     fn test_time_unit_second() {
         let conf = Seconds::default_array(&[S5, S30, S55]);
@@ -327,7 +376,7 @@ mod test {
             assert_eq!(unit.val, 30);
         }
         {
-            let mut unit = TimeUnit::new(S30, conf.clone());
+            let unit = TimeUnit::new(S30, conf.clone());
             assert!(unit.is_match());
             assert_eq!(unit.next_val(), Some(S55));
             assert_eq!(unit.min_val(), S5);

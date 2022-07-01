@@ -1,4 +1,6 @@
+use crate::traits::{AsData, FromData};
 use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday as CWeekday};
+
 // use time::{OffsetDateTime, Weekday};
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DateTime {
@@ -270,10 +272,6 @@ impl From<DateTime> for NaiveDateTime {
     }
 }
 
-pub trait AsData<Ty>: Copy {
-    fn as_data(self) -> Ty;
-}
-
 impl AsData<u8> for WeekDay {
     fn as_data(self) -> u8 {
         self as u8
@@ -356,10 +354,6 @@ impl From<CWeekday> for WeekDay {
             CWeekday::Sun => Self::W7,
         }
     }
-}
-
-pub(crate) trait FromData<Ty> {
-    fn from_data(val: Ty) -> Self;
 }
 
 impl FromData<u32> for MonthDay {
