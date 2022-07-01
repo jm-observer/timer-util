@@ -1,9 +1,11 @@
 use crate::{AsData, Hours, Minuters, MonthDay, MonthDays, Operator, Seconds, WeekDay, WeekDays};
-use chrono::{Datelike, NaiveDate};
+use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime};
+use log::debug;
 
-struct TimeUnit<T: Operator> {
+#[derive(Debug)]
+pub struct TimeUnit<T: Operator> {
     // 最大值
-    max: T::ValTy,
+    // max: T::ValTy,
     // 当前的起始值
     index: T::DataTy,
     // 对应的配置
@@ -11,8 +13,8 @@ struct TimeUnit<T: Operator> {
     // 最后的值
     val: T::ValTy,
 }
-
-struct DayUnit {
+#[derive(Debug)]
+pub struct DayUnit {
     // 当前的起始值
     year: i32,
     // 最后的值
@@ -54,22 +56,11 @@ impl Computer for DayUnit {
             self.month += 1;
         }
         let date = NaiveDate::from_ymd(self.year, self.month, 1);
+        let next_month = next_month(self.year, self.month);
         let weekday: WeekDay = date.weekday().into();
-
-        self.conf = if let Some(ref weekdays) = self.weekdays {
-            let week_monthdays = weekdays.to_month_days(weekday);
-            if let Some(ref monthdays) = self.monthdays {
-                monthdays.merge(monthdays)
-            } else {
-                week_monthdays
-            }
-        } else if let Some(ref monthdays) = self.monthdays {
-            monthdays.clone()
-        } else {
-            unreachable!("")
-        };
-        self.max = date.day();
-        self.day = self.min_val();
+        self.conf = merge_days_conf(self.monthdays.clone(), self.weekdays.clone(), weekday);
+        self.max = next_month.pred().day();
+        self.day = self.conf.min_val();
         self.val = self.day.as_data();
     }
 
@@ -94,7 +85,7 @@ impl Computer for DayUnit {
     }
 
     fn val_mut(&mut self, val: Self::DataTy) {
-        self.day = val;
+        self.val = val.as_data();
     }
 
     fn val(&self) -> Self::ValTy {
@@ -113,6 +104,26 @@ impl Computer for DayUnit {
 //         self.conf.min_val()
 //     }
 // }
+
+fn merge_days_conf(
+    monthdays: Option<MonthDays>,
+    weekdays: Option<WeekDays>,
+    weekday: WeekDay,
+) -> MonthDays {
+    let conf = if let Some(ref weekdays) = weekdays {
+        let week_monthdays = weekdays.to_month_days(weekday);
+        if let Some(ref monthdays) = monthdays {
+            monthdays.merge(&week_monthdays)
+        } else {
+            week_monthdays
+        }
+    } else if let Some(ref monthdays) = monthdays {
+        monthdays.clone()
+    } else {
+        unreachable!("")
+    };
+    conf
+}
 
 impl<T: Operator> Computer for TimeUnit<T> {
     const MIN: Self::ValTy = <T as Operator>::MIN;
@@ -143,10 +154,10 @@ impl<T: Operator> Computer for TimeUnit<T> {
 }
 
 impl<T: Operator> TimeUnit<T> {
-    fn new(index: T::DataTy, conf: T) -> Self {
+    pub fn new(index: T::DataTy, conf: T) -> Self {
         let val = index;
         Self {
-            max: T::MAX,
+            // max: T::MAX,
             index,
             conf,
             val: val.as_data(),
@@ -161,24 +172,32 @@ impl<T: Operator> TimeUnit<T> {
         self.index
     }
 }
-//
-// fn option_min<T: PartialOrd>(a: Option<T>, b: Option<T>) -> Option<T> {
-//     if let Some(a) = a {
-//         if let Some(b) = b {
-//             if b > a {
-//                 Some(a)
-//             } else {
-//                 Some(b)
-//             }
-//         } else {
-//             Some(a)
-//         }
-//     } else {
-//         b
-//     }
-// }
 
-struct Composition {
+impl DayUnit {
+    pub fn new(
+        year: i32,
+        month: u32,
+        monthdays: Option<MonthDays>,
+        weekdays: Option<WeekDays>,
+        day: MonthDay,
+        first_week_day: WeekDay,
+        max: u32,
+    ) -> Self {
+        let conf = merge_days_conf(monthdays.clone(), weekdays.clone(), first_week_day);
+        Self {
+            year,
+            month,
+            monthdays,
+            weekdays,
+            day: day.clone(),
+            max,
+            conf,
+            val: day.as_data(),
+        }
+    }
+}
+#[derive(Debug)]
+pub struct Composition {
     day: DayUnit,
     hour: TimeUnit<Hours>,
     minuter: TimeUnit<Minuters>,
@@ -186,13 +205,38 @@ struct Composition {
 }
 
 impl Composition {
-    pub fn next(&mut self) {
+    pub fn new(
+        day: DayUnit,
+        hour: TimeUnit<Hours>,
+        minuter: TimeUnit<Minuters>,
+        second: TimeUnit<Seconds>,
+    ) -> Self {
+        Self {
+            day,
+            hour,
+            minuter,
+            second,
+        }
+    }
+
+    pub fn next(&mut self) -> NaiveDateTime {
         if self.day.is_match() {
             if self.match_hour() {
-                return;
+                return self.to_datetime();
             }
         }
         self.next_day();
+        self.to_datetime()
+    }
+    fn to_datetime(&self) -> NaiveDateTime {
+        NaiveDateTime::new(
+            NaiveDate::from_ymd(self.day.year, self.day.month, self.day.val),
+            NaiveTime::from_hms(
+                self.hour.val,
+                self.minuter.val as u32,
+                self.second.val as u32,
+            ),
+        )
     }
     fn match_hour(&mut self) -> bool {
         if self.hour.is_match() {
@@ -236,9 +280,11 @@ impl Composition {
 
     fn next_day(&mut self) {
         if let Some(day) = self.day.next_val() {
+            debug!("day_unit: {:?}, next_day: {:?}", self.day, day);
             self.day.val_mut(day);
         } else {
             self.day.update_to_next_ring();
+            debug!("day_unit: {:?}", self.day);
         }
         self.hour_update_to_next_ring();
     }
@@ -253,6 +299,16 @@ impl Composition {
     fn second_update_to_next_ring(&mut self) {
         self.second.update_to_next_ring();
     }
+}
+
+pub fn next_month(mut year: i32, mut month: u32) -> NaiveDate {
+    if month == 12 {
+        month = 1;
+        year += 1;
+    } else {
+        month += 1;
+    }
+    NaiveDate::from_ymd(year, month, 1)
 }
 
 #[cfg(test)]
@@ -277,19 +333,19 @@ mod test {
             assert_eq!(unit.min_val(), S5);
         }
         {
-            let mut unit = TimeUnit::new(S45, conf.clone());
+            let unit = TimeUnit::new(S45, conf.clone());
             assert!(!unit.is_match());
             assert_eq!(unit.next_val(), Some(S55));
             assert_eq!(unit.min_val(), S5);
         }
         {
-            let mut unit = TimeUnit::new(S55, conf.clone());
+            let unit = TimeUnit::new(S55, conf.clone());
             assert!(unit.is_match());
             assert_eq!(unit.next_val(), None);
             assert_eq!(unit.min_val(), S5);
         }
         {
-            let mut unit = TimeUnit::new(S57, conf.clone());
+            let unit = TimeUnit::new(S57, conf.clone());
             assert!(!unit.is_match());
             assert_eq!(unit.next_val(), None);
             assert_eq!(unit.min_val(), S5);
