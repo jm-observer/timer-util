@@ -16,9 +16,8 @@ include = [
 [dependencies]
 anyhow = "1.0"
 log = { version = "0.4" }
-#time = {version = "0.3", features = ["local-offset", "formatting", "macros"]}
 chrono = "0.4"
 
 [dev-dependencies]
 tokio = {version ="1.18", features = ["rt-multi-thread", "macros", "time"]}
-custom-utils = {version ="0.8.0", features = ["dev"] }
+custom-utils = {version ="0.8.1", features = ["dev"] }

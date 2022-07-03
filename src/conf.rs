@@ -1,5 +1,4 @@
-use crate::builder::DayConfBuilder;
-use crate::compute::WeekArray;
+use crate::compute::{merge_days_conf, WeekArray};
 use crate::compute::{next_month, Composition, DayUnit, TimeUnit};
 use crate::data::{Hour, Minuter, MonthDay, Second, WeekDay};
 use crate::traits::{AsData, FromData, Operator};
@@ -7,10 +6,10 @@ use anyhow::{bail, Result};
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, Timelike};
 use log::debug;
 use std::fmt::{Debug, Formatter};
-use std::ops::{Add, Bound, RangeBounds};
+use std::ops::{Add, Bound, RangeBounds, Sub};
 
 #[derive(Debug, Clone)]
-pub struct DayHourMinuterSecondConf {
+pub struct TimerConf {
     pub(crate) month_days: Option<MonthDays>,
     pub(crate) week_days: Option<WeekDays>,
     pub(crate) hours: Hours,
@@ -18,32 +17,57 @@ pub struct DayHourMinuterSecondConf {
     pub(crate) seconds: Seconds,
 }
 
-impl DayHourMinuterSecondConf {
-    pub fn _next_2(&self, now: NaiveDateTime) -> NaiveDateTime {
-        let now = now.add(Duration::seconds(1));
-        let year = now.year();
-        let month = now.month();
-        let day = MonthDay::from_data(now.day());
+impl TimerConf {
+    fn datetime(&self, range: impl RangeBounds<NaiveDateTime>) -> Result<Vec<NaiveDateTime>> {
+        // 转成 a..=b
+        let mut start = match range.start_bound() {
+            Bound::Unbounded => bail!("不支持该模式"),
+            Bound::Included(first) => first.sub(Duration::seconds(1)),
+            Bound::Excluded(first) => first.clone(),
+        };
+        let end = match range.end_bound() {
+            Bound::Unbounded => bail!("不支持该模式"),
+            Bound::Included(end) => end.clone(),
+            Bound::Excluded(end) => end.sub(Duration::seconds(1)),
+        };
+        if start > end {
+            bail!("起始-结束日期配置错误")
+        }
+        let mut year = start.year();
+        let mut month = start.month();
+        while year < end.year() {
+            while month <= 12 {}
+            year += 1;
+        }
+        month = 1;
+        while month <= end.month() {}
 
+        todo!()
+    }
+    fn datetime_by_month(&self, year: i32, month: u32, day: u32, hour: u32, min: u32, second: u32) {
         let first_week_day: WeekDay = NaiveDate::from_ymd(year, month, 1).weekday().into();
-        let max = next_month(year, month).pred().day();
-
-        let day_unit = DayUnit::new(
-            year,
-            month,
+        let conf = merge_days_conf(
             self.month_days.clone(),
             self.week_days.clone(),
-            day,
             first_week_day,
-            max,
         );
-        let hour: TimeUnit<Hours> = TimeUnit::new(Hour::from_data(now.hour()), self.hours.clone());
-        let minuter = TimeUnit::new(
-            Minuter::from_data(now.minute() as u64),
+        let mut start = false;
+        for day_tmp in conf.to_vec().into_iter().next() {
+            if !start && day_tmp < day {
+                continue;
+            }
+        }
+    }
+    pub fn _next_2(&self, now: NaiveDateTime) -> NaiveDateTime {
+        let now = now.add(Duration::seconds(1));
+        let mut composition = Composition::from(
+            now,
+            self.month_days.clone(),
+            self.week_days.clone(),
+            self.hours.clone(),
             self.minuters.clone(),
+            self.seconds.clone(),
         );
-        let second = TimeUnit::new(Second::from_data(now.second() as u64), self.seconds.clone());
-        let mut composition = Composition::new(day_unit, hour, minuter, second);
         debug!("Composition: {:?}", composition);
         let next = composition.next();
         next
@@ -52,10 +76,23 @@ impl DayHourMinuterSecondConf {
         let now_local = Local::now().naive_local();
         let next_local = self._next_2(now_local);
         let times = (next_local.timestamp() - now_local.timestamp()) as u64;
-        let next_time = NextTime::init(times);
         debug!(
-            "now: {}, next: {}, next time is after {:?} = {}s",
-            now_local, next_local, next_time, times
+            "now : {}-{:02}-{:02} {:02}:{:02}:{:02}",
+            now_local.year(),
+            now_local.month(),
+            now_local.day(),
+            now_local.hour(),
+            now_local.minute(),
+            now_local.second()
+        );
+        debug!(
+            "next: {}-{:02}-{:02} {:02}:{:02}:{:02}",
+            next_local.year(),
+            next_local.month(),
+            next_local.day(),
+            next_local.hour(),
+            next_local.minute(),
+            next_local.second()
         );
         times
     }
@@ -181,7 +218,7 @@ impl WeekDays {
     const MIN: u8 = 1;
     const MAX: u8 = 7;
 
-    pub fn to_month_days(&self, start: WeekDay) -> MonthDays {
+    pub(crate) fn to_month_days(&self, start: WeekDay) -> MonthDays {
         let mut next = Some(WeekArray::init(start));
         let conf_week_days = self.to_vec();
 
@@ -201,26 +238,26 @@ impl WeekDays {
         Self(0)
     }
     #[inline]
-    fn default_value(val: WeekDay) -> Self {
+    pub fn default_value(val: WeekDay) -> Self {
         let ins = Self::_default();
         ins.add(val)
     }
     #[inline]
-    fn default_range(range: impl RangeBounds<WeekDay>) -> Result<Self> {
+    pub fn default_range(range: impl RangeBounds<WeekDay>) -> Result<Self> {
         let ins = Self::_default();
         ins.add_range(range)
     }
     #[inline]
-    fn default_all() -> Self {
+    pub fn default_all() -> Self {
         let mut ins = Self::_default();
         ins._val_mut(Self::DEFAULT_MAX);
         ins
     }
-    fn default_array(vals: &[WeekDay]) -> Self {
+    pub fn default_array(vals: &[WeekDay]) -> Self {
         let ins = Self::_default();
         ins.add_array(vals)
     }
-    fn add_array(mut self, vals: &[WeekDay]) -> Self {
+    pub fn add_array(mut self, vals: &[WeekDay]) -> Self {
         let mut val = self._val();
         for i in vals {
             val |= Self::ONE << i.as_data();
@@ -228,12 +265,12 @@ impl WeekDays {
         self._val_mut(val);
         self
     }
-    fn add(mut self, index: WeekDay) -> Self {
+    pub fn add(mut self, index: WeekDay) -> Self {
         let index = index.as_data();
         self._val_mut(self._val() | (Self::ONE << index));
         self
     }
-    fn add_range(mut self, range: impl RangeBounds<WeekDay>) -> Result<Self> {
+    pub fn add_range(mut self, range: impl RangeBounds<WeekDay>) -> Result<Self> {
         let mut first = match range.start_bound() {
             Bound::Unbounded => Self::MIN,
             Bound::Included(first) => first.as_data(),
@@ -274,27 +311,27 @@ impl WeekDays {
         self.0
     }
 }
-
-#[derive(Debug)]
-pub struct NextTime {
-    hours: u64,
-    minuters: u64,
-    seconds: u64,
-}
-impl NextTime {
-    fn init(mut times: u64) -> Self {
-        let seconds = times % 60;
-        times = times / 60;
-        let minuters = times % 60;
-        times = times / 60;
-        let hours = times % 60;
-        Self {
-            seconds,
-            minuters,
-            hours,
-        }
-    }
-}
+//
+// #[derive(Debug)]
+// pub struct NextTime {
+//     hours: u64,
+//     minuters: u64,
+//     seconds: u64,
+// }
+// impl NextTime {
+//     fn init(mut times: u64) -> Self {
+//         let seconds = times % 60;
+//         times = times / 60;
+//         let minuters = times % 60;
+//         times = times / 60;
+//         let hours = times % 60;
+//         Self {
+//             seconds,
+//             minuters,
+//             hours,
+//         }
+//     }
+// }
 
 impl Debug for Seconds {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -342,36 +379,14 @@ impl Debug for WeekDays {
     }
 }
 
-pub fn default_month_days(month_days: MonthDays) -> DayConfBuilder {
-    DayConfBuilder {
-        month_days: Some(month_days),
-        week_days: None,
-    }
-}
-pub fn default_week_days(week_days: WeekDays) -> DayConfBuilder {
-    DayConfBuilder {
-        month_days: None,
-        week_days: Some(week_days),
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::{Hours, Minuters, MonthDays, Operator, Seconds, WeekDays};
-    use crate::compute::WeekArray;
-    use crate::conf::{default_month_days, default_week_days};
-    use crate::data::MonthDay::D15;
-    use crate::data::WeekDay::W1;
-    use crate::data::{
-        DateTime,
-        Hour::{self, *},
-        Minuter::{self, *},
-        MonthDay::{self, *},
-        Second::{self, *},
-        WeekDay::{self, *},
-    };
+    use crate::conf::TimerConf;
+    use crate::data::{DateTime, Hour::*, Minuter::*, MonthDay::*, Second::*, WeekDay::*};
+    use crate::*;
     use anyhow::Result;
-    use chrono::{Datelike, NaiveDate};
+    use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime};
     use log::debug;
 
     /// 测试WeekDays生成当月的月日期
@@ -397,184 +412,31 @@ mod test {
     }
 
     /// 测试WeekArray的init和next方法
-    #[test]
-    fn test_init_first_week() {
-        assert_eq!(
-            WeekArray::init(W3),
-            WeekArray {
-                days: [-1, 0, 1, 2, 3, 4, 5],
-            }
-        );
-        assert_eq!(
-            WeekArray::init(W1),
-            WeekArray {
-                days: [1, 2, 3, 4, 5, 6, 7],
-            }
-        );
-        assert_eq!(
-            WeekArray::init(W7),
-            WeekArray {
-                days: [-5, -4, -3, -2, -1, 0, 1],
-            }
-        );
-        {
-            let next = WeekArray::init(W7).next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [2, 3, 4, 5, 6, 7, 8]);
-
-            let next = next.next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [9, 10, 11, 12, 13, 14, 15]);
-
-            let next = next.next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [16, 17, 18, 19, 20, 21, 22]);
-
-            let next = next.next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [23, 24, 25, 26, 27, 28, 29]);
-
-            let next = next.next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [30, 31, 32, 33, 34, 35, 36]);
-
-            let next = next.next();
-            assert!(next.is_none());
-        }
-        {
-            let next = WeekArray::init(W3).next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [6, 7, 8, 9, 10, 11, 12]);
-
-            let next = next.next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [13, 14, 15, 16, 17, 18, 19]);
-
-            let next = next.next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [20, 21, 22, 23, 24, 25, 26]);
-
-            let next = next.next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [27, 28, 29, 30, 31, 32, 33]);
-
-            let next = next.next();
-            assert!(next.is_none());
-        }
-
-        {
-            let next = WeekArray::init(W1).next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [8, 9, 10, 11, 12, 13, 14]);
-
-            let next = next.next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [15, 16, 17, 18, 19, 20, 21]);
-
-            let next = next.next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [22, 23, 24, 25, 26, 27, 28]);
-
-            let next = next.next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [29, 30, 31, 32, 33, 34, 35]);
-
-            let next = next.next();
-            assert!(next.is_none());
-        }
-    }
 
     #[test]
     fn test() -> Result<()> {
-        let conf = default_week_days(WeekDays::default_array(&[WeekDay::W5, WeekDay::W3]))
-            .conf_month_days(MonthDays::default_array(&[
-                MonthDay::D5,
-                MonthDay::D15,
-                MonthDay::D24,
-            ]))
-            .build_with_hours(Hours::default_array(&[Hour::H5, Hour::H10, Hour::H15]))
-            .build_with_minuter(Minuters::default_array(&[
-                Minuter::M15,
-                Minuter::M30,
-                Minuter::M45,
-            ]))
-            .build_with_second(Seconds::default_array(&[
-                Second::S15,
-                Second::S30,
-                Second::S45,
-            ]));
+        custom_utils::logger::logger_stdout_debug();
+        let conf = configure_weekday(WeekDays::default_array(&[W5, W3]))
+            .conf_month_days(MonthDays::default_array(&[D5, D15, D24]))
+            .build_with_hours(Hours::default_array(&[H5, H10, H15]))
+            .build_with_minuter(Minuters::default_array(&[M15, M30, M45]))
+            .build_with_second(Seconds::default_array(&[S15, S30, S45]));
 
-        let mut dt0 = DateTime {
-            date: NaiveDate::from_ymd_opt(2022, 5, 15).unwrap(),
-            month_day: D15,
-            week_day: W7,
-            hour: H10,
-            minuter: M30,
-            second: S30,
-        };
-
-        {
-            let dist: DateTime = conf._next_2(dt0.into()).into();
-            let mut dt0_dist = dt0.clone();
-            dt0_dist.second = S45;
-
-            assert!(dist == dt0_dist);
-            dt0_dist.second = S31;
-            assert!(dist != dt0_dist);
-        }
-        //
-        {
-            dt0.second = S45;
-            let dist: DateTime = conf._next_2(dt0.into()).into();
-            let mut dt0_dist = dt0.clone();
-            dt0_dist.second = S15;
-            dt0_dist.minuter = M45;
-            assert!(dist == dt0_dist);
-        }
-        {
-            dt0.second = S45;
-            dt0.minuter = M45;
-            let dist: DateTime = conf._next_2(dt0.into()).into();
-            let mut dt0_dist = dt0.clone();
-            dt0_dist.second = S15;
-            dt0_dist.minuter = M15;
-            dt0_dist.hour = H15;
-            assert!(dist == dt0_dist);
-        }
-        {
-            let dt0 = DateTime {
-                date: NaiveDate::from_ymd_opt(2022, 5, 15).unwrap(),
-                month_day: D15,
-                week_day: W7,
-                hour: H15,
-                minuter: M45,
-                second: S45,
-            };
-            let dist: DateTime = conf._next_2(dt0.into()).into();
-            let mut dt0_dist = dt0.clone();
-            dt0_dist.second = S15;
-            dt0_dist.minuter = M15;
-            dt0_dist.hour = H5;
-            dt0_dist.week_day = W3;
-            dt0_dist.month_day = D18;
-            dt0_dist.date = NaiveDate::from_ymd_opt(2022, 5, 18).unwrap();
-            debug!("{:?}", dist);
-            debug!("{:?}", dt0_dist);
-            assert_eq!(dist, dt0_dist);
-        }
+        compare(
+            &conf,
+            &[
+                datetime(2020, 5, 15, 10, 30, 30),
+                datetime(2020, 5, 15, 10, 30, 45),
+                datetime(2020, 5, 15, 10, 45, 15),
+                datetime(2020, 5, 15, 10, 45, 30),
+                datetime(2020, 5, 15, 10, 45, 45),
+                datetime(2020, 5, 15, 15, 15, 15),
+                datetime(2020, 5, 15, 15, 15, 30),
+                datetime(2020, 5, 15, 15, 15, 45),
+                datetime(2020, 5, 15, 15, 30, 15),
+                datetime(2020, 5, 15, 15, 30, 30),
+            ],
+        );
         // -------------------------------
         let dt0 = DateTime {
             date: NaiveDate::from_ymd_opt(2022, 5, 20).unwrap(),
@@ -596,23 +458,11 @@ mod test {
             assert_eq!(dist, dt0_dist);
         }
         // -------------------------------
-        let conf = default_week_days(WeekDays::default_array(&[WeekDay::W5, WeekDay::W3]))
-            .conf_month_days(MonthDays::default_array(&[
-                MonthDay::D5,
-                MonthDay::D15,
-                MonthDay::D31,
-            ]))
-            .build_with_hours(Hours::default_array(&[Hour::H5, Hour::H10, Hour::H15]))
-            .build_with_minuter(Minuters::default_array(&[
-                Minuter::M15,
-                Minuter::M30,
-                Minuter::M45,
-            ]))
-            .build_with_second(Seconds::default_array(&[
-                Second::S15,
-                Second::S30,
-                Second::S45,
-            ]));
+        let conf = configure_weekday(WeekDays::default_array(&[W5, W3]))
+            .conf_month_days(MonthDays::default_array(&[D5, D15, D31]))
+            .build_with_hours(Hours::default_array(&[H5, H10, H15]))
+            .build_with_minuter(Minuters::default_array(&[M15, M30, M45]))
+            .build_with_second(Seconds::default_array(&[S15, S30, S45]));
         debug!("{:?}", conf);
         let dt0 = DateTime {
             date: NaiveDate::from_ymd_opt(2022, 4, 29).unwrap(),
@@ -639,10 +489,10 @@ mod test {
     #[test]
     fn test_year() -> Result<()> {
         // custom_utils::logger::logger_stdout_debug();
-        let conf = default_month_days(MonthDays::default_value(D31))
+        let conf = configure_monthday(MonthDays::default_value(D31))
             .build_with_hours(Hours::default_array(&[H12]))
-            .build_with_minuter(Minuters::default_array(&[Minuter::M30]))
-            .build_with_second(Seconds::default_array(&[Second::S0]));
+            .build_with_minuter(Minuters::default_array(&[M30]))
+            .build_with_second(Seconds::default_array(&[S0]));
         let dt0 = DateTime {
             date: NaiveDate::from_ymd_opt(2021, 12, 31).unwrap(),
             month_day: D31,
@@ -668,10 +518,10 @@ mod test {
     #[test]
     fn test_month() -> Result<()> {
         custom_utils::logger::logger_stdout_debug();
-        let conf = default_month_days(MonthDays::default_value(D31))
+        let conf = configure_monthday(MonthDays::default_value(D31))
             .build_with_hours(Hours::default_array(&[H12]))
-            .build_with_minuter(Minuters::default_array(&[Minuter::M30]))
-            .build_with_second(Seconds::default_array(&[Second::S0]));
+            .build_with_minuter(Minuters::default_array(&[M30]))
+            .build_with_second(Seconds::default_array(&[S0]));
         let dt0 = DateTime {
             date: NaiveDate::from_ymd_opt(2022, 1, 31).unwrap(),
             month_day: D31,
@@ -693,5 +543,31 @@ mod test {
             assert!(dist.date.month() == 3, "{:?}", dist.date);
         }
         Ok(())
+    }
+
+    fn compare(conf: &TimerConf, times: &[NaiveDateTime]) {
+        let len = times.len() - 1;
+        let mut index = 0;
+        loop {
+            assert_eq!(conf._next_2(times[index].clone()), times[index + 1].clone());
+            index += 1;
+            if index == len {
+                break;
+            }
+        }
+    }
+
+    fn datetime(
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        min: u32,
+        second: u32,
+    ) -> NaiveDateTime {
+        NaiveDateTime::new(
+            NaiveDate::from_ymd(year, month, day),
+            NaiveTime::from_hms(hour, min, second),
+        )
     }
 }

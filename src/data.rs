@@ -297,51 +297,13 @@ impl AsData<u64> for Second {
         self as u64
     }
 }
-//
-// impl AsData<u8> for InnerWeekDay {
-//     fn as_data(self) -> u8 {
-//         self.0
-//     }
-// }
-// impl AsData<u32> for InnerMonthDay {
-//     fn as_data(self) -> u32 {
-//         self.0
-//     }
-// }
-// impl AsData<u32> for InnerHour {
-//     fn as_data(self) -> u32 {
-//         self.0
-//     }
-// }
-// impl AsData<u64> for InnerMinuter {
-//     fn as_data(self) -> u64 {
-//         self.0
-//     }
-// }
-// impl AsData<u64> for InnerSecond {
-//     fn as_data(self) -> u64 {
-//         self.0
-//     }
-// }
 
 impl<T, A: AsData<T>> AsData<T> for &A {
     fn as_data(self) -> T {
         (*self).as_data()
     }
 }
-// impl From<CWeekday> for InnerWeekDay {
-//     fn from(day: CWeekday) -> Self {
-//         match day {
-//             CWeekday::Mon => InnerWeekDay(1),
-//             CWeekday::Tue => InnerWeekDay(2),
-//             CWeekday::Wed => InnerWeekDay(3),
-//             CWeekday::Thu => InnerWeekDay(4),
-//             CWeekday::Fri => InnerWeekDay(5),
-//             CWeekday::Sat => InnerWeekDay(6),
-//             CWeekday::Sun => InnerWeekDay(7),
-//         }
-//     }
-// }
+
 impl From<CWeekday> for WeekDay {
     fn from(day: CWeekday) -> Self {
         match day {

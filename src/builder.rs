@@ -1,13 +1,22 @@
-use crate::conf::{
-    default_month_days, default_week_days, DayHourMinuterSecondConf, Hours, Minuters, MonthDays,
-    Seconds, WeekDays,
-};
+use crate::conf::{Hours, Minuters, MonthDays, Seconds, TimerConf, WeekDays};
 
 pub struct DayConfBuilder {
     pub(crate) month_days: Option<MonthDays>,
     pub(crate) week_days: Option<WeekDays>,
 }
 impl DayConfBuilder {
+    pub(crate) fn default_month_days(month_days: MonthDays) -> DayConfBuilder {
+        DayConfBuilder {
+            month_days: Some(month_days),
+            week_days: None,
+        }
+    }
+    pub(crate) fn default_week_days(week_days: WeekDays) -> DayConfBuilder {
+        DayConfBuilder {
+            month_days: None,
+            week_days: Some(week_days),
+        }
+    }
     pub fn conf_month_days(self, month_days: MonthDays) -> Self {
         DayConfBuilder {
             month_days: Some(month_days),
@@ -51,8 +60,8 @@ pub struct DayHourMinuterConfBuilder {
     minuters: Minuters,
 }
 impl DayHourMinuterConfBuilder {
-    pub fn build_with_second(self, seconds: Seconds) -> DayHourMinuterSecondConf {
-        DayHourMinuterSecondConf {
+    pub fn build_with_second(self, seconds: Seconds) -> TimerConf {
+        TimerConf {
             month_days: self.month_days,
             week_days: self.week_days,
             hours: self.hours,
@@ -64,11 +73,11 @@ impl DayHourMinuterConfBuilder {
 
 impl From<MonthDays> for DayConfBuilder {
     fn from(builder: MonthDays) -> Self {
-        default_month_days(builder)
+        DayConfBuilder::default_month_days(builder)
     }
 }
 impl From<WeekDays> for DayConfBuilder {
     fn from(builder: WeekDays) -> Self {
-        default_week_days(builder)
+        DayConfBuilder::default_week_days(builder)
     }
 }

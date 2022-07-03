@@ -1,7 +1,8 @@
 use crate::conf::{Hours, Minuters, MonthDays, Seconds, WeekDays};
-use crate::data::{MonthDay, WeekDay};
-use crate::traits::{AsData, Computer, Operator};
-use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime};
+use crate::data::{Hour, Minuter, MonthDay, Second, WeekDay};
+use crate::traits::{AsData, Computer, FromData, Operator};
+use anyhow::bail;
+use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use log::debug;
 
 #[derive(Debug)]
@@ -96,7 +97,7 @@ impl Computer for DayUnit {
 //     }
 // }
 
-fn merge_days_conf(
+pub fn merge_days_conf(
     monthdays: Option<MonthDays>,
     weekdays: Option<WeekDays>,
     weekday: WeekDay,
@@ -196,6 +197,25 @@ pub struct Composition {
 }
 
 impl Composition {
+    pub fn from(
+        now: NaiveDateTime,
+        month_days: Option<MonthDays>,
+        week_days: Option<WeekDays>,
+        hours: Hours,
+        min: Minuters,
+        seconds: Seconds,
+    ) -> Self {
+        let year = now.year();
+        let month = now.month();
+        let day = MonthDay::from_data(now.day());
+        let first_week_day: WeekDay = NaiveDate::from_ymd(year, month, 1).weekday().into();
+        let max = next_month(year, month).pred().day();
+        let day_unit = DayUnit::new(year, month, month_days, week_days, day, first_week_day, max);
+        let hour: TimeUnit<Hours> = TimeUnit::new(Hour::from_data(now.hour()), hours);
+        let minuter = TimeUnit::new(Minuter::from_data(now.minute() as u64), min);
+        let second = TimeUnit::new(Second::from_data(now.second() as u64), seconds);
+        Composition::new(day_unit, hour, minuter, second)
+    }
     pub fn new(
         day: DayUnit,
         hour: TimeUnit<Hours>,
@@ -358,11 +378,290 @@ impl WeekArray {
     }
 }
 
+pub struct A<'a> {
+    days: &'a [u32],
+    hours: &'a [u32],
+    minuters: &'a [u32],
+    seconds: &'a [u32],
+}
+
+impl<'a> A<'a> {
+    pub fn start(
+        &self,
+        day: u32,
+        hour: u32,
+        minuter: u32,
+        second: u32,
+    ) -> Vec<(u32, u32, u32, u32)> {
+        let mut res = Vec::default();
+        let mut day_index = 0;
+        let mut hour_index = 0;
+        let mut minuter_index = 0;
+        let mut second_index = 0;
+        let mut foud = false;
+        while day_index < self.days.len() {
+            if self.days[day_index] > day {
+                foud = true;
+                break;
+            } else if self.days[day_index] == day {
+                while hour_index < self.hours.len() {
+                    if self.hours[hour_index] > hour {
+                        foud = true;
+                        break;
+                    } else if self.hours[hour_index] == hour {
+                        while minuter_index < self.minuters.len() {
+                            if self.minuters[minuter_index] > minuter {
+                                foud = true;
+                                break;
+                            } else if self.minuters[minuter_index] == hour {
+                                while second_index < self.seconds.len() {
+                                    if self.seconds[minuter_index] > second {
+                                        foud = true;
+                                        break;
+                                    }
+                                    second_index += 1;
+                                }
+                            }
+                            minuter_index += 1;
+                        }
+                    }
+                    hour_index += 1;
+                }
+            }
+            day_index += 1;
+        }
+        if foud {
+            let days = &self.days[day_index..];
+            let hours = &self.hours[hour_index..];
+            let minuters = &self.minuters[minuter_index..];
+            let seconds = &self.seconds[second_index..];
+            for day in days {
+                for hour in hours {
+                    for minuter in minuters {
+                        for second in seconds {
+                            res.push((*day, *hour, *minuter, *second));
+                        }
+                    }
+                }
+            }
+        }
+        res
+    }
+}
+
+/// 找出<=给定值的索引
+fn get_smaller_index(
+    day: u32,
+    hour: u32,
+    minuter: u32,
+    second: u32,
+    days: &[u32],
+    hours: &[u32],
+    minuters: &[u32],
+    seconds: &[u32],
+) -> Option<(usize, usize, usize, usize)> {
+    let mut day_index = days.len() - 1;
+    let mut hour_index = hours.len() - 1;
+    let mut minuter_index = minuters.len() - 1;
+    let mut second_index = seconds.len() - 1;
+    let mut foud = false;
+    while day_index > 0 {
+        if days[day_index] < day {
+            foud = true;
+            break;
+        } else if days[day_index] == day {
+            while hour_index > 0 {
+                if hours[hour_index] < hour {
+                    foud = true;
+                    break;
+                } else if hours[hour_index] == hour {
+                    while minuter_index > 0 {
+                        if minuters[minuter_index] < minuter {
+                            foud = true;
+                            break;
+                        } else if minuters[minuter_index] == hour {
+                            while second_index > 0 {
+                                if seconds[minuter_index] <= second {
+                                    foud = true;
+                                    break;
+                                }
+                                second_index -= 1;
+                            }
+                        }
+                        minuter_index -= 1;
+                    }
+                }
+                hour_index -= 1;
+            }
+        }
+        day_index -= 1;
+    }
+    if foud {
+        Some((day_index, hour_index, minuter_index, second_index))
+    } else {
+        None
+    }
+}
+
+fn get_bigger_index(
+    day: u32,
+    hour: u32,
+    minuter: u32,
+    second: u32,
+    days: &[u32],
+    hours: &[u32],
+    minuters: &[u32],
+    seconds: &[u32],
+) -> Option<(usize, usize, usize, usize)> {
+    let mut day_index = 0;
+    let mut hour_index = 0;
+    let mut minuter_index = 0;
+    let mut second_index = 0;
+    let mut foud = false;
+    while day_index < days.len() {
+        if days[day_index] > day {
+            foud = true;
+            break;
+        } else if days[day_index] == day {
+            while hour_index < hours.len() {
+                if hours[hour_index] > hour {
+                    foud = true;
+                    break;
+                } else if hours[hour_index] == hour {
+                    while minuter_index < minuters.len() {
+                        if minuters[minuter_index] > minuter {
+                            foud = true;
+                            break;
+                        } else if minuters[minuter_index] == hour {
+                            while second_index < seconds.len() {
+                                if seconds[minuter_index] > second {
+                                    foud = true;
+                                    break;
+                                }
+                                second_index += 1;
+                            }
+                        }
+                        minuter_index += 1;
+                    }
+                }
+                hour_index += 1;
+            }
+        }
+        day_index += 1;
+    }
+    if foud {
+        Some((day_index, hour_index, minuter_index, second_index))
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::data::Second::*;
+    // use crate::data::Second::*;
     use crate::traits::Computer;
+    use crate::*;
+
+    #[test]
+    fn test_init_first_week() {
+        assert_eq!(
+            WeekArray::init(W3),
+            WeekArray {
+                days: [-1, 0, 1, 2, 3, 4, 5],
+            }
+        );
+        assert_eq!(
+            WeekArray::init(W1),
+            WeekArray {
+                days: [1, 2, 3, 4, 5, 6, 7],
+            }
+        );
+        assert_eq!(
+            WeekArray::init(W7),
+            WeekArray {
+                days: [-5, -4, -3, -2, -1, 0, 1],
+            }
+        );
+        {
+            let next = WeekArray::init(W7).next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [2, 3, 4, 5, 6, 7, 8]);
+
+            let next = next.next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [9, 10, 11, 12, 13, 14, 15]);
+
+            let next = next.next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [16, 17, 18, 19, 20, 21, 22]);
+
+            let next = next.next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [23, 24, 25, 26, 27, 28, 29]);
+
+            let next = next.next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [30, 31, 32, 33, 34, 35, 36]);
+
+            let next = next.next();
+            assert!(next.is_none());
+        }
+        {
+            let next = WeekArray::init(W3).next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [6, 7, 8, 9, 10, 11, 12]);
+
+            let next = next.next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [13, 14, 15, 16, 17, 18, 19]);
+
+            let next = next.next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [20, 21, 22, 23, 24, 25, 26]);
+
+            let next = next.next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [27, 28, 29, 30, 31, 32, 33]);
+
+            let next = next.next();
+            assert!(next.is_none());
+        }
+
+        {
+            let next = WeekArray::init(W1).next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [8, 9, 10, 11, 12, 13, 14]);
+
+            let next = next.next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [15, 16, 17, 18, 19, 20, 21]);
+
+            let next = next.next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [22, 23, 24, 25, 26, 27, 28]);
+
+            let next = next.next();
+            assert!(next.is_some());
+            let next = next.unwrap();
+            assert_eq!(next.days, [29, 30, 31, 32, 33, 34, 35]);
+
+            let next = next.next();
+            assert!(next.is_none());
+        }
+    }
 
     #[test]
     fn test_time_unit_second() {
