@@ -4,6 +4,7 @@ use crate::traits::{AsData, Computer, FromData, Operator};
 use anyhow::bail;
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use log::debug;
+use std::cmp::{min, Ordering};
 
 #[derive(Debug)]
 pub struct TimeUnit<T: Operator> {
@@ -378,187 +379,310 @@ impl WeekArray {
     }
 }
 
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub struct YearMonth {
+    pub(crate) year: i32,
+    pub(crate) month: u32,
+}
+impl YearMonth {
+    pub(crate) fn new(year: i32, month: u32) -> Self {
+        Self { year, month }
+    }
+    pub fn add_month(&mut self) {
+        if self.month == 12 {
+            self.month = 1;
+            self.year += 1;
+        } else {
+            self.month += 1;
+        }
+    }
+}
+impl PartialOrd for YearMonth {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        if self.year == other.year {
+            self.month.partial_cmp(&other.month)
+        } else {
+            self.year.partial_cmp(&other.year)
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct A<'a> {
-    days: &'a [u32],
-    hours: &'a [u32],
-    minuters: &'a [u32],
-    seconds: &'a [u32],
+    // day_first_index: usize,
+    hour_first_index: usize,
+    min_first_index: usize,
+    second_first_index: usize,
+    // day_last: usize,
+    hour_last: usize,
+    min_last: usize,
+    second_last: usize,
+
+    pub(crate) days: &'a [u32],
+    pub(crate) hours: &'a [u32],
+    pub(crate) minuters: &'a [u32],
+    pub(crate) seconds: &'a [u32],
 }
 
 impl<'a> A<'a> {
-    pub fn start(
-        &self,
-        day: u32,
-        hour: u32,
-        minuter: u32,
-        second: u32,
-    ) -> Vec<(u32, u32, u32, u32)> {
-        let mut res = Vec::default();
+    pub fn new(days: &'a [u32], hours: &'a [u32], minuters: &'a [u32], seconds: &'a [u32]) -> Self {
+        Self {
+            hour_first_index: 0,
+            min_first_index: 0,
+            second_first_index: 0,
+            hour_last: hours.len() - 1,
+            min_last: minuters.len() - 1,
+            second_last: seconds.len() - 1,
+            days,
+            hours,
+            minuters,
+            seconds,
+        }
+    }
+    pub fn generate_datetime(&self, year_month: &YearMonth) -> Vec<NaiveDateTime> {
+        let mut datetimes = Vec::with_capacity(
+            self.days.len() * self.hours.len() * self.minuters.len() * self.seconds.len(),
+        );
+        let mut index = 0;
+        let mut hour_index = 0;
+        let mut hour_index_max = 0;
+
+        let max = self.days.len() - 1;
+        let mut day_first = false;
+        let mut day_last = false;
+        let mut hour_first = false;
+        let mut hour_last = false;
+        let mut min_first = false;
+        let mut min_last = false;
+        let mut sec_first = false;
+        while index <= max {
+            hour_index = 0;
+            hour_index_max = self.hours.len() - 1;
+            if index == 0 {
+                hour_index = self.hour_first_index;
+                day_first = true;
+            } else {
+                day_first = false;
+            }
+            if index == max {
+                hour_index_max = self.hour_last;
+                day_last = true;
+            } else {
+                day_last = false;
+            }
+            let mut hour_index_tmp = hour_index;
+            while hour_index_tmp <= hour_index_max {
+                let mut min_index_tmp = 0;
+                let mut min_index_max = self.minuters.len() - 1;
+                if day_first && hour_index_tmp == hour_index {
+                    min_index_tmp = self.min_first_index;
+                    hour_first = true;
+                } else {
+                    hour_first = false;
+                }
+
+                if day_last && hour_index_tmp == hour_index_max {
+                    min_index_max = self.min_last;
+                    hour_last = true;
+                } else {
+                    hour_last = false;
+                }
+                while min_index_tmp <= min_index_max {
+                    let mut second_index_tmp = 0;
+                    let mut second_index_max = self.seconds.len() - 1;
+                    if hour_first && min_index_tmp == self.min_first_index {
+                        second_index_tmp = self.second_first_index;
+                        min_first = true;
+                    } else {
+                        min_first = false;
+                    }
+
+                    if hour_last && min_index_tmp == min_index_max {
+                        second_index_max = self.second_last;
+                        min_last = true;
+                    } else {
+                        min_last = false;
+                    }
+                    while second_index_tmp <= second_index_max {
+                        datetimes.push(datetime(
+                            year_month.year,
+                            year_month.month,
+                            self.days[index],
+                            self.hours[hour_index_tmp],
+                            self.minuters[min_index_tmp],
+                            self.seconds[second_index_tmp],
+                        ));
+                        second_index_tmp += 1;
+                    }
+                    min_index_tmp += 1;
+                }
+                hour_index_tmp += 1;
+            }
+            index += 1;
+        }
+        datetimes
+    }
+
+    pub fn filter_bigger(&mut self, day: u32, hour: u32, minuter: u32, second: u32) -> bool {
+        let day_index_max = self.days.len() - 1;
+        let hour_index_max = self.hours.len() - 1;
+        let minuter_index_max = self.minuters.len() - 1;
+        let second_index_max = self.seconds.len() - 1;
+
         let mut day_index = 0;
         let mut hour_index = 0;
         let mut minuter_index = 0;
         let mut second_index = 0;
-        let mut foud = false;
-        while day_index < self.days.len() {
+
+        let mut found = false;
+        while day_index <= day_index_max {
             if self.days[day_index] > day {
-                foud = true;
+                found = true;
                 break;
             } else if self.days[day_index] == day {
-                while hour_index < self.hours.len() {
+                hour_index = 0;
+                while hour_index <= hour_index_max {
                     if self.hours[hour_index] > hour {
-                        foud = true;
+                        found = true;
                         break;
                     } else if self.hours[hour_index] == hour {
-                        while minuter_index < self.minuters.len() {
+                        minuter_index = 0;
+                        while minuter_index <= minuter_index_max {
                             if self.minuters[minuter_index] > minuter {
-                                foud = true;
+                                found = true;
                                 break;
-                            } else if self.minuters[minuter_index] == hour {
-                                while second_index < self.seconds.len() {
-                                    if self.seconds[minuter_index] > second {
-                                        foud = true;
+                            } else if self.minuters[minuter_index] == minuter {
+                                second_index = 0;
+                                while second_index <= second_index_max {
+                                    if self.seconds[second_index] >= second {
+                                        found = true;
                                         break;
                                     }
                                     second_index += 1;
                                 }
+                                if found {
+                                    break;
+                                }
                             }
                             minuter_index += 1;
                         }
+                        if found {
+                            break;
+                        }
+                    }
+                    if found {
+                        break;
                     }
                     hour_index += 1;
+                }
+                if found {
+                    break;
                 }
             }
             day_index += 1;
         }
-        if foud {
-            let days = &self.days[day_index..];
-            let hours = &self.hours[hour_index..];
-            let minuters = &self.minuters[minuter_index..];
-            let seconds = &self.seconds[second_index..];
-            for day in days {
-                for hour in hours {
-                    for minuter in minuters {
-                        for second in seconds {
-                            res.push((*day, *hour, *minuter, *second));
-                        }
-                    }
-                }
-            }
+        if found {
+            // debug!("self.days {} {}", day_index, self.days[day_index]);
+            self.days = &self.days[day_index..];
+            self.hour_first_index = hour_index;
+            self.min_first_index = minuter_index;
+            self.second_first_index = second_index
         }
-        res
+        found
     }
-}
-
-/// 找出<=给定值的索引
-fn get_smaller_index(
-    day: u32,
-    hour: u32,
-    minuter: u32,
-    second: u32,
-    days: &[u32],
-    hours: &[u32],
-    minuters: &[u32],
-    seconds: &[u32],
-) -> Option<(usize, usize, usize, usize)> {
-    let mut day_index = days.len() - 1;
-    let mut hour_index = hours.len() - 1;
-    let mut minuter_index = minuters.len() - 1;
-    let mut second_index = seconds.len() - 1;
-    let mut foud = false;
-    while day_index > 0 {
-        if days[day_index] < day {
-            foud = true;
-            break;
-        } else if days[day_index] == day {
-            while hour_index > 0 {
-                if hours[hour_index] < hour {
-                    foud = true;
-                    break;
-                } else if hours[hour_index] == hour {
-                    while minuter_index > 0 {
-                        if minuters[minuter_index] < minuter {
-                            foud = true;
-                            break;
-                        } else if minuters[minuter_index] == hour {
-                            while second_index > 0 {
-                                if seconds[minuter_index] <= second {
-                                    foud = true;
+    /// 过滤出那些比较小的
+    pub fn filter_small(&mut self, day: u32, hour: u32, minuter: u32, second: u32) -> bool {
+        let mut day_index = self.days.len() - 1;
+        let mut hour_index = self.hours.len() - 1;
+        let mut minuter_index = self.minuters.len() - 1;
+        let mut second_index = self.seconds.len() - 1;
+        let mut found = false;
+        while day_index >= 0 {
+            if self.days[day_index] < day {
+                found = true;
+                break;
+            } else if self.days[day_index] == day {
+                hour_index = self.hours.len() - 1;
+                while hour_index >= 0 {
+                    if self.hours[hour_index] < hour {
+                        found = true;
+                        break;
+                    } else if self.hours[hour_index] == hour {
+                        minuter_index = self.minuters.len() - 1;
+                        while minuter_index >= 0 {
+                            if self.minuters[minuter_index] < minuter {
+                                found = true;
+                                break;
+                            } else if self.minuters[minuter_index] == minuter {
+                                second_index = self.seconds.len() - 1;
+                                while second_index >= 0 {
+                                    if self.seconds[second_index] <= second {
+                                        found = true;
+                                        break;
+                                    }
+                                    if second_index == 0 {
+                                        break;
+                                    } else {
+                                        second_index -= 1;
+                                    }
+                                }
+                                if found {
                                     break;
                                 }
-                                second_index -= 1;
+                            }
+                            if minuter_index == 0 {
+                                break;
+                            } else {
+                                minuter_index -= 1;
                             }
                         }
-                        minuter_index -= 1;
+                        if found {
+                            break;
+                        }
+                    }
+                    if hour_index == 0 {
+                        break;
+                    } else {
+                        hour_index -= 1;
                     }
                 }
-                hour_index -= 1;
+                if found {
+                    break;
+                }
+            }
+            if day_index == 0 {
+                break;
+            } else {
+                day_index -= 1;
             }
         }
-        day_index -= 1;
-    }
-    if foud {
-        Some((day_index, hour_index, minuter_index, second_index))
-    } else {
-        None
+        if found {
+            self.days = &self.days[..=day_index];
+            self.hour_last = hour_index;
+            self.min_last = minuter_index;
+            self.second_last = second_index;
+        }
+        found
     }
 }
 
-fn get_bigger_index(
+pub(crate) fn datetime(
+    year: i32,
+    month: u32,
     day: u32,
     hour: u32,
-    minuter: u32,
+    min: u32,
     second: u32,
-    days: &[u32],
-    hours: &[u32],
-    minuters: &[u32],
-    seconds: &[u32],
-) -> Option<(usize, usize, usize, usize)> {
-    let mut day_index = 0;
-    let mut hour_index = 0;
-    let mut minuter_index = 0;
-    let mut second_index = 0;
-    let mut foud = false;
-    while day_index < days.len() {
-        if days[day_index] > day {
-            foud = true;
-            break;
-        } else if days[day_index] == day {
-            while hour_index < hours.len() {
-                if hours[hour_index] > hour {
-                    foud = true;
-                    break;
-                } else if hours[hour_index] == hour {
-                    while minuter_index < minuters.len() {
-                        if minuters[minuter_index] > minuter {
-                            foud = true;
-                            break;
-                        } else if minuters[minuter_index] == hour {
-                            while second_index < seconds.len() {
-                                if seconds[minuter_index] > second {
-                                    foud = true;
-                                    break;
-                                }
-                                second_index += 1;
-                            }
-                        }
-                        minuter_index += 1;
-                    }
-                }
-                hour_index += 1;
-            }
-        }
-        day_index += 1;
-    }
-    if foud {
-        Some((day_index, hour_index, minuter_index, second_index))
-    } else {
-        None
-    }
+) -> NaiveDateTime {
+    NaiveDateTime::new(
+        NaiveDate::from_ymd(year, month, day),
+        NaiveTime::from_hms(hour, min, second),
+    )
 }
-
 #[cfg(test)]
 mod test {
     use super::*;
+    use chrono::format::Numeric::Year;
     // use crate::data::Second::*;
     use crate::traits::Computer;
     use crate::*;
@@ -698,6 +822,38 @@ mod test {
             assert_eq!(unit.next_val(), None);
             assert_eq!(unit.min_val(), S5);
         }
+    }
+
+    #[test]
+    fn test_cmp_year_month() {
+        assert!(
+            YearMonth {
+                year: 2010,
+                month: 10,
+            } > YearMonth {
+                year: 2010,
+                month: 9,
+            }
+        );
+        assert!(
+            YearMonth {
+                year: 2010,
+                month: 10,
+            } > YearMonth {
+                year: 2009,
+                month: 11,
+            }
+        );
+        assert_eq!(
+            YearMonth {
+                year: 2010,
+                month: 10,
+            },
+            YearMonth {
+                year: 2010,
+                month: 10,
+            }
+        );
     }
 
     // #[test]

@@ -1,8 +1,9 @@
-use crate::compute::{merge_days_conf, WeekArray};
+use crate::compute::{merge_days_conf, WeekArray, YearMonth, A};
 use crate::compute::{next_month, Composition, DayUnit, TimeUnit};
 use crate::data::{Hour, Minuter, MonthDay, Second, WeekDay};
 use crate::traits::{AsData, FromData, Operator};
 use anyhow::{bail, Result};
+use chrono::format::Numeric::YearMod100;
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, Timelike};
 use log::debug;
 use std::fmt::{Debug, Formatter};
@@ -18,7 +19,7 @@ pub struct TimerConf {
 }
 
 impl TimerConf {
-    fn datetime(&self, range: impl RangeBounds<NaiveDateTime>) -> Result<Vec<NaiveDateTime>> {
+    fn datetimes(&self, range: impl RangeBounds<NaiveDateTime>) -> Result<Vec<NaiveDateTime>> {
         // 转成 a..=b
         let mut start = match range.start_bound() {
             Bound::Unbounded => bail!("不支持该模式"),
@@ -30,33 +31,63 @@ impl TimerConf {
             Bound::Included(end) => end.clone(),
             Bound::Excluded(end) => end.sub(Duration::seconds(1)),
         };
-        if start > end {
+        if start >= end {
             bail!("起始-结束日期配置错误")
         }
-        let mut year = start.year();
-        let mut month = start.month();
-        while year < end.year() {
-            while month <= 12 {}
-            year += 1;
+        let mut start_year_month = YearMonth::new(start.year(), start.month());
+        let start_tmp = start_year_month.clone();
+        let end_year_month = YearMonth::new(end.year(), end.month());
+        let hours = self.hours.to_vec();
+        let mins: Vec<u32> = self
+            .minuters
+            .to_vec()
+            .into_iter()
+            .map(|x| x as u32)
+            .collect::<Vec<u32>>();
+        let seconds: Vec<u32> = self
+            .seconds
+            .to_vec()
+            .into_iter()
+            .map(|x| x as u32)
+            .collect::<Vec<u32>>();
+        let mut datetime = Vec::default();
+        while start_year_month <= end_year_month {
+            let days = self.datetime_by_month(&start_year_month).to_vec();
+            let mut a = A::new(
+                days.as_slice(),
+                hours.as_slice(),
+                mins.as_slice(),
+                seconds.as_slice(),
+            );
+            debug!("{:?}", a);
+            if start_year_month == start_tmp {
+                if !a.filter_bigger(start.day(), start.hour(), start.minute(), start.second()) {
+                    start_year_month.add_month();
+                    continue;
+                }
+            }
+            debug!("{:?}", a);
+            if start_year_month == end_year_month {
+                if !a.filter_small(end.day(), end.hour(), end.minute(), end.second()) {
+                    start_year_month.add_month();
+                    continue;
+                }
+            }
+            debug!("{:?}", a);
+            datetime.append(&mut a.generate_datetime(&start_year_month));
+            start_year_month.add_month();
         }
-        month = 1;
-        while month <= end.month() {}
-
-        todo!()
+        Ok(datetime)
     }
-    fn datetime_by_month(&self, year: i32, month: u32, day: u32, hour: u32, min: u32, second: u32) {
-        let first_week_day: WeekDay = NaiveDate::from_ymd(year, month, 1).weekday().into();
-        let conf = merge_days_conf(
+    fn datetime_by_month(&self, year_month: &YearMonth) -> MonthDays {
+        let first_week_day: WeekDay = NaiveDate::from_ymd(year_month.year, year_month.month, 1)
+            .weekday()
+            .into();
+        merge_days_conf(
             self.month_days.clone(),
             self.week_days.clone(),
             first_week_day,
-        );
-        let mut start = false;
-        for day_tmp in conf.to_vec().into_iter().next() {
-            if !start && day_tmp < day {
-                continue;
-            }
-        }
+        )
     }
     pub fn _next_2(&self, now: NaiveDateTime) -> NaiveDateTime {
         let now = now.add(Duration::seconds(1));
@@ -382,6 +413,7 @@ impl Debug for WeekDays {
 #[cfg(test)]
 mod test {
     use super::{Hours, Minuters, MonthDays, Operator, Seconds, WeekDays};
+    use crate::compute::datetime;
     use crate::conf::TimerConf;
     use crate::data::{DateTime, Hour::*, Minuter::*, MonthDay::*, Second::*, WeekDay::*};
     use crate::*;
@@ -410,8 +442,34 @@ mod test {
         );
         // debug!("{:?}", month_days.to_vec());
     }
+    #[test]
+    fn test_datetimes() -> Result<()> {
+        custom_utils::logger::logger_stdout_debug();
+        let some_datetimes = [
+            datetime(2020, 5, 15, 10, 30, 30),
+            datetime(2020, 5, 15, 10, 30, 45),
+            datetime(2020, 5, 15, 10, 45, 15),
+            datetime(2020, 5, 15, 10, 45, 30),
+            datetime(2020, 5, 15, 10, 45, 45),
+            datetime(2020, 5, 15, 15, 15, 15),
+            datetime(2020, 5, 15, 15, 15, 30),
+            datetime(2020, 5, 15, 15, 15, 45),
+            datetime(2020, 5, 15, 15, 30, 15),
+            datetime(2020, 5, 15, 15, 30, 30),
+        ];
+        let conf = configure_weekday(WeekDays::default_array(&[W5, W3]))
+            .conf_month_days(MonthDays::default_array(&[D5, D15, D24]))
+            .build_with_hours(Hours::default_array(&[H5, H10, H15]))
+            .build_with_minuter(Minuters::default_array(&[M15, M30, M45]))
+            .build_with_second(Seconds::default_array(&[S15, S30, S45]));
+        debug!("2020-5-15 10:30:17");
+        let datetimes =
+            conf.datetimes(datetime(2020, 5, 15, 10, 30, 17)..=datetime(2020, 5, 15, 15, 30, 30))?;
 
-    /// 测试WeekArray的init和next方法
+        assert_eq!(datetimes.as_slice(), &some_datetimes[..]);
+
+        Ok(())
+    }
 
     #[test]
     fn test() -> Result<()> {
@@ -555,19 +613,5 @@ mod test {
                 break;
             }
         }
-    }
-
-    fn datetime(
-        year: i32,
-        month: u32,
-        day: u32,
-        hour: u32,
-        min: u32,
-        second: u32,
-    ) -> NaiveDateTime {
-        NaiveDateTime::new(
-            NaiveDate::from_ymd(year, month, day),
-            NaiveTime::from_hms(hour, min, second),
-        )
     }
 }
