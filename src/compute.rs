@@ -1,10 +1,9 @@
 use crate::conf::{Hours, Minuters, MonthDays, Seconds, WeekDays};
 use crate::data::{Hour, Minuter, MonthDay, Second, WeekDay};
 use crate::traits::{AsData, Computer, FromData, Operator};
-use anyhow::bail;
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use log::debug;
-use std::cmp::{min, Ordering};
+use std::cmp::Ordering;
 
 #[derive(Debug)]
 pub struct TimeUnit<T: Operator> {
@@ -407,7 +406,8 @@ impl PartialOrd for YearMonth {
     }
 }
 
-#[derive(Debug)]
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
 pub struct A<'a> {
     // day_first_index: usize,
     hour_first_index: usize,
@@ -444,17 +444,17 @@ impl<'a> A<'a> {
             self.days.len() * self.hours.len() * self.minuters.len() * self.seconds.len(),
         );
         let mut index = 0;
-        let mut hour_index = 0;
-        let mut hour_index_max = 0;
+        let mut hour_index;
+        let mut hour_index_max;
 
         let max = self.days.len() - 1;
-        let mut day_first = false;
-        let mut day_last = false;
-        let mut hour_first = false;
-        let mut hour_last = false;
-        let mut min_first = false;
-        let mut min_last = false;
-        let mut sec_first = false;
+        let mut day_first;
+        let mut day_last;
+        let mut hour_first;
+        let mut hour_last;
+        // let mut min_first = false;
+        // let mut min_last = false;
+        // let mut sec_first = false;
         while index <= max {
             hour_index = 0;
             hour_index_max = self.hours.len() - 1;
@@ -492,16 +492,16 @@ impl<'a> A<'a> {
                     let mut second_index_max = self.seconds.len() - 1;
                     if hour_first && min_index_tmp == self.min_first_index {
                         second_index_tmp = self.second_first_index;
-                        min_first = true;
-                    } else {
-                        min_first = false;
+                        //     min_first = true;
+                        // } else {
+                        //     min_first = false;
                     }
 
                     if hour_last && min_index_tmp == min_index_max {
                         second_index_max = self.second_last;
-                        min_last = true;
-                    } else {
-                        min_last = false;
+                        //     min_last = true;
+                        // } else {
+                        //     min_last = false;
                     }
                     while second_index_tmp <= second_index_max {
                         datetimes.push(datetime(
@@ -538,18 +538,24 @@ impl<'a> A<'a> {
         while day_index <= day_index_max {
             if self.days[day_index] > day {
                 found = true;
+                hour_index = 0;
+                minuter_index = 0;
+                second_index = 0;
                 break;
             } else if self.days[day_index] == day {
                 hour_index = 0;
                 while hour_index <= hour_index_max {
                     if self.hours[hour_index] > hour {
                         found = true;
+                        minuter_index = 0;
+                        second_index = 0;
                         break;
                     } else if self.hours[hour_index] == hour {
                         minuter_index = 0;
                         while minuter_index <= minuter_index_max {
                             if self.minuters[minuter_index] > minuter {
                                 found = true;
+                                second_index = 0;
                                 break;
                             } else if self.minuters[minuter_index] == minuter {
                                 second_index = 0;
@@ -597,25 +603,31 @@ impl<'a> A<'a> {
         let mut minuter_index = self.minuters.len() - 1;
         let mut second_index = self.seconds.len() - 1;
         let mut found = false;
-        while day_index >= 0 {
+        loop {
             if self.days[day_index] < day {
                 found = true;
+                hour_index = self.hours.len() - 1;
+                minuter_index = self.minuters.len() - 1;
+                second_index = self.seconds.len() - 1;
                 break;
             } else if self.days[day_index] == day {
                 hour_index = self.hours.len() - 1;
-                while hour_index >= 0 {
+                loop {
                     if self.hours[hour_index] < hour {
                         found = true;
+                        minuter_index = self.minuters.len() - 1;
+                        second_index = self.seconds.len() - 1;
                         break;
                     } else if self.hours[hour_index] == hour {
                         minuter_index = self.minuters.len() - 1;
-                        while minuter_index >= 0 {
+                        loop {
                             if self.minuters[minuter_index] < minuter {
                                 found = true;
+                                second_index = self.seconds.len() - 1;
                                 break;
                             } else if self.minuters[minuter_index] == minuter {
                                 second_index = self.seconds.len() - 1;
-                                while second_index >= 0 {
+                                loop {
                                     if self.seconds[second_index] <= second {
                                         found = true;
                                         break;
@@ -682,8 +694,6 @@ pub(crate) fn datetime(
 #[cfg(test)]
 mod test {
     use super::*;
-    use chrono::format::Numeric::Year;
-    // use crate::data::Second::*;
     use crate::traits::Computer;
     use crate::*;
 

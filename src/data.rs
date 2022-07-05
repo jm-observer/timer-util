@@ -320,7 +320,7 @@ impl From<CWeekday> for WeekDay {
 
 impl FromData<u32> for MonthDay {
     fn from_data(val: u32) -> Self {
-        assert!(val < 60);
+        assert!(val < 32);
         match val {
             1 => Self::D1,
             2 => Self::D2,

@@ -59,6 +59,18 @@ pub trait Operator: Sized {
         ins._val_mut(Self::DEFAULT_MAX);
         ins
     }
+    #[inline]
+    fn default_all_by_max(max: Self::DataTy) -> Self {
+        let mut ins = Self::_default();
+        let mut val = ins._val();
+        let mut index = Self::MIN;
+        while index <= max.as_data() {
+            val |= Self::ONE << index.clone();
+            index += Self::ONE;
+        }
+        ins._val_mut(val);
+        ins
+    }
     fn default_array(vals: &[Self::DataTy]) -> Self {
         let ins = Self::_default();
         ins.add_array(vals)
@@ -102,6 +114,11 @@ pub trait Operator: Sized {
     fn merge(&self, other: &Self) -> Self {
         let mut new = Self::_default();
         new._val_mut(self._val() | other._val());
+        new
+    }
+    fn intersection(&self, other: &Self) -> Self {
+        let mut new = Self::_default();
+        new._val_mut(self._val() & other._val());
         new
     }
 

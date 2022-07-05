@@ -1,9 +1,8 @@
+use crate::compute::Composition;
 use crate::compute::{merge_days_conf, WeekArray, YearMonth, A};
-use crate::compute::{next_month, Composition, DayUnit, TimeUnit};
 use crate::data::{Hour, Minuter, MonthDay, Second, WeekDay};
 use crate::traits::{AsData, FromData, Operator};
 use anyhow::{bail, Result};
-use chrono::format::Numeric::YearMod100;
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, Timelike};
 use log::debug;
 use std::fmt::{Debug, Formatter};
@@ -19,9 +18,9 @@ pub struct TimerConf {
 }
 
 impl TimerConf {
-    fn datetimes(&self, range: impl RangeBounds<NaiveDateTime>) -> Result<Vec<NaiveDateTime>> {
+    pub fn datetimes(&self, range: impl RangeBounds<NaiveDateTime>) -> Result<Vec<NaiveDateTime>> {
         // 转成 a..=b
-        let mut start = match range.start_bound() {
+        let start = match range.start_bound() {
             Bound::Unbounded => bail!("不支持该模式"),
             Bound::Included(first) => first.sub(Duration::seconds(1)),
             Bound::Excluded(first) => first.clone(),
@@ -59,6 +58,7 @@ impl TimerConf {
                 mins.as_slice(),
                 seconds.as_slice(),
             );
+
             debug!("{:?}", a);
             if start_year_month == start_tmp {
                 if !a.filter_bigger(start.day(), start.hour(), start.minute(), start.second()) {
@@ -83,11 +83,19 @@ impl TimerConf {
         let first_week_day: WeekDay = NaiveDate::from_ymd(year_month.year, year_month.month, 1)
             .weekday()
             .into();
+        let mut next_month = year_month.clone();
+        next_month.add_month();
+
+        let max = NaiveDate::from_ymd(next_month.year, next_month.month, 1)
+            .sub(Duration::days(1))
+            .day();
+        let month_all = MonthDays::default_all_by_max(MonthDay::from_data(max));
         merge_days_conf(
             self.month_days.clone(),
             self.week_days.clone(),
             first_week_day,
         )
+        .intersection(&month_all)
     }
     pub fn _next_2(&self, now: NaiveDateTime) -> NaiveDateTime {
         let now = now.add(Duration::seconds(1));
@@ -415,11 +423,85 @@ mod test {
     use super::{Hours, Minuters, MonthDays, Operator, Seconds, WeekDays};
     use crate::compute::datetime;
     use crate::conf::TimerConf;
+    #[allow(unused_imports)]
     use crate::data::{DateTime, Hour::*, Minuter::*, MonthDay::*, Second::*, WeekDay::*};
     use crate::*;
     use anyhow::Result;
-    use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime};
+    use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime};
     use log::debug;
+    use std::ops::Sub;
+
+    #[test]
+    fn test_auto() -> anyhow::Result<()> {
+        // custom_utils::logger::logger_stdout_debug();
+        let conf = configure_weekday(WeekDays::default_array(&[W1, W3, W5]))
+            .conf_month_days(
+                MonthDays::default_range(D5..D10)?
+                    .add_range(D15..D20)?
+                    .add_range(D25..D30)?,
+            )
+            .build_with_hours(Hours::default_array(&[H5, H10, H15, H20]))
+            .build_with_minuter(Minuters::default_array(&[M15, M30, M45]))
+            .build_with_second(Seconds::default_value(S0));
+
+        let mut start = datetime(2022, 7, 4, 20, 15, 0);
+        let end = datetime(2033, 8, 15, 12, 30, 45);
+
+        let datetimes = conf.datetimes(start.clone()..end)?;
+        start = start.sub(Duration::seconds(1));
+        let mut next = end;
+        for datetime in datetimes {
+            next = conf._next_2(start.clone());
+            assert_eq!(datetime, next, "{:?} - {:?}", start, next);
+            start = datetime;
+        }
+        assert_eq!(
+            datetime(2033, 8, 15, 10, 45, 0),
+            next,
+            "{:?} - {:?}",
+            end,
+            next
+        );
+
+        let mut start = datetime(2022, 7, 4, 20, 15, 0);
+        let end = datetime(2033, 8, 15, 15, 30, 0);
+        let datetimes = conf.datetimes(start.clone()..end.clone())?;
+        start = start.sub(Duration::seconds(1));
+        let mut next = start.clone();
+        for datetime in datetimes {
+            next = conf._next_2(start.clone());
+            assert_eq!(datetime, next, "{:?} - {:?}", start, next);
+            start = datetime;
+        }
+        assert_eq!(
+            datetime(2033, 8, 15, 15, 15, 0),
+            next,
+            "{:?} - {:?}",
+            end,
+            next
+        );
+        Ok(())
+    }
+    #[test]
+    fn test_auto_pre() -> anyhow::Result<()> {
+        custom_utils::logger::logger_stdout_debug();
+        let conf = configure_weekday(WeekDays::default_array(&[W1, W3, W5]))
+            .conf_month_days(
+                MonthDays::default_range(D5..D10)?
+                    .add_range(D15..D20)?
+                    .add_range(D25..D30)?,
+            )
+            .build_with_hours(Hours::default_array(&[H5, H10, H15, H20]))
+            .build_with_minuter(Minuters::default_array(&[M15, M30, M45]))
+            .build_with_second(Seconds::default_value(S0));
+
+        let start = datetime(2022, 7, 4, 22, 17, 10);
+        let end = datetime(2022, 7, 5, 12, 30, 45);
+
+        let datetimes = conf.datetimes(start.clone()..end)?;
+        debug!("{:?}", datetimes);
+        Ok(())
+    }
 
     /// 测试WeekDays生成当月的月日期
     #[test]
