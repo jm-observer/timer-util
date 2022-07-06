@@ -294,7 +294,8 @@ impl Composition {
     fn next_day(&mut self) {
         if let Some(day) = self.day.next_val() {
             debug!("day_unit: {:?}, next_day: {:?}", self.day, day);
-            self.day.val_mut(day);
+            self.day.val_mut(day.clone());
+            self.day.day = day;
         } else {
             self.day.update_to_next_ring();
         }

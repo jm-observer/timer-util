@@ -484,7 +484,7 @@ mod test {
     }
     #[test]
     fn test_auto_pre() -> anyhow::Result<()> {
-        custom_utils::logger::logger_stdout_debug();
+        // custom_utils::logger::logger_stdout_debug();
         let conf = configure_weekday(WeekDays::default_array(&[W1, W3, W5]))
             .conf_month_days(
                 MonthDays::default_range(D5..D10)?
@@ -526,7 +526,7 @@ mod test {
     }
     #[test]
     fn test_datetimes() -> Result<()> {
-        custom_utils::logger::logger_stdout_debug();
+        // custom_utils::logger::logger_stdout_debug();
         let some_datetimes = [
             datetime(2020, 5, 15, 10, 30, 30),
             datetime(2020, 5, 15, 10, 30, 45),
@@ -555,7 +555,7 @@ mod test {
 
     #[test]
     fn test() -> Result<()> {
-        custom_utils::logger::logger_stdout_debug();
+        // custom_utils::logger::logger_stdout_debug();
         let conf = configure_weekday(WeekDays::default_array(&[W5, W3]))
             .conf_month_days(MonthDays::default_array(&[D5, D15, D24]))
             .build_with_hours(Hours::default_array(&[H5, H10, H15]))
@@ -657,7 +657,7 @@ mod test {
     }
     #[test]
     fn test_month() -> Result<()> {
-        custom_utils::logger::logger_stdout_debug();
+        // custom_utils::logger::logger_stdout_debug();
         let conf = configure_monthday(MonthDays::default_value(D31))
             .build_with_hours(Hours::default_array(&[H12]))
             .build_with_minuter(Minuters::default_array(&[M30]))
