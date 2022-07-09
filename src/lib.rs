@@ -1,5 +1,5 @@
 use crate::builder::DayConfBuilder;
-pub use conf::{Hours, Minuters, MonthDays, Seconds, WeekDays};
+pub use conf::{Hours, Minuters, MonthDays, Seconds, TimerConf, WeekDays};
 pub use data::{Hour::*, Minuter::*, MonthDay::*, Second::*, WeekDay::*};
 pub use traits::Operator;
 
