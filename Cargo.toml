@@ -1,6 +1,6 @@
 [package]
 name = "timer-util"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 description = "a simple tool to compute time: easy to config, and easy to use."
 license-file = "LICENSE"

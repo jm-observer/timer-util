@@ -97,7 +97,7 @@ impl TimerConf {
         )
         .intersection(&month_all)
     }
-    pub fn _next_2(&self, now: NaiveDateTime) -> NaiveDateTime {
+    pub fn next_with_time(&self, now: NaiveDateTime) -> NaiveDateTime {
         let now = now.add(Duration::seconds(1));
         let mut composition = Composition::from(
             now,
@@ -113,7 +113,7 @@ impl TimerConf {
     }
     pub fn next(&self) -> u64 {
         let now_local = Local::now().naive_local();
-        let next_local = self._next_2(now_local);
+        let next_local = self.next_with_time(now_local);
         let times = (next_local.timestamp() - now_local.timestamp()) as u64;
         debug!(
             "now : {}-{:02}-{:02} {:02}:{:02}:{:02}",
@@ -451,7 +451,7 @@ mod test {
         start = start.sub(Duration::seconds(1));
         let mut next = end;
         for datetime in datetimes {
-            next = conf._next_2(start.clone());
+            next = conf.next_with_time(start.clone());
             assert_eq!(datetime, next, "{:?} - {:?}", start, next);
             start = datetime;
         }
@@ -469,7 +469,7 @@ mod test {
         start = start.sub(Duration::seconds(1));
         let mut next = start.clone();
         for datetime in datetimes {
-            next = conf._next_2(start.clone());
+            next = conf.next_with_time(start.clone());
             assert_eq!(datetime, next, "{:?} - {:?}", start, next);
             start = datetime;
         }
@@ -587,7 +587,7 @@ mod test {
             second: S45,
         };
         {
-            let dist: DateTime = conf._next_2(dt0.into()).into();
+            let dist: DateTime = conf.next_with_time(dt0.into()).into();
             let mut dt0_dist = dt0.clone();
             dt0_dist.week_day = W2;
             dt0_dist.month_day = D24;
@@ -613,7 +613,7 @@ mod test {
             second: S45,
         };
         {
-            let dist: DateTime = conf._next_2(dt0.into()).into();
+            let dist: DateTime = conf.next_with_time(dt0.into()).into();
             let mut dt0_dist = dt0.clone();
             dt0_dist.week_day = W3;
             dt0_dist.month_day = D4;
@@ -642,7 +642,7 @@ mod test {
             second: S30,
         };
         {
-            let dist: DateTime = conf._next_2(dt0.into()).into();
+            let dist: DateTime = conf.next_with_time(dt0.into()).into();
             let mut dt0_dist = dist.clone();
             dt0_dist.second = S0;
             dt0_dist.minuter = M30;
@@ -671,7 +671,7 @@ mod test {
             second: S30,
         };
         {
-            let dist: DateTime = conf._next_2(dt0.into()).into();
+            let dist: DateTime = conf.next_with_time(dt0.into()).into();
             let mut dt0_dist = dist.clone();
             dt0_dist.second = S0;
             dt0_dist.minuter = M30;
@@ -689,7 +689,10 @@ mod test {
         let len = times.len() - 1;
         let mut index = 0;
         loop {
-            assert_eq!(conf._next_2(times[index].clone()), times[index + 1].clone());
+            assert_eq!(
+                conf.next_with_time(times[index].clone()),
+                times[index + 1].clone()
+            );
             index += 1;
             if index == len {
                 break;
