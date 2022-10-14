@@ -173,6 +173,12 @@ pub trait AsData<Ty>: Copy {
     fn as_data(self) -> Ty;
 }
 
-pub(crate) trait FromData<Ty> {
+pub trait FromData<Ty> {
     fn from_data(val: Ty) -> Self;
+}
+
+pub trait TryFromData<Ty>: FromData<Ty> {
+    fn try_from_data(val: Ty) -> anyhow::Result<Self>
+    where
+        Self: Sized;
 }

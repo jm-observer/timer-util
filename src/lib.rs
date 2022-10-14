@@ -4,7 +4,7 @@ pub use data::{
     Hour, Hour::*, Minuter, Minuter::*, MonthDay, MonthDay::*, Second, Second::*, WeekDay,
     WeekDay::*,
 };
-pub use traits::Operator;
+pub use traits::*;
 
 mod builder;
 mod compute;

@@ -1,4 +1,6 @@
 use crate::traits::{AsData, FromData};
+use crate::TryFromData;
+use anyhow::{bail, Result};
 use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday as CWeekday};
 
 // use time::{OffsetDateTime, Weekday};
@@ -233,7 +235,7 @@ pub enum Second {
 
 impl DateTime {
     #[allow(dead_code)]
-    pub(crate) fn default() -> anyhow::Result<Self> {
+    pub(crate) fn default() -> Result<Self> {
         let now = Local::now().naive_local();
         Ok(now.into())
     }
@@ -320,7 +322,7 @@ impl From<CWeekday> for WeekDay {
 
 impl FromData<u32> for MonthDay {
     fn from_data(val: u32) -> Self {
-        assert!(val < 32);
+        assert!(val < 32 && val != 0);
         match val {
             1 => Self::D1,
             2 => Self::D2,
@@ -359,7 +361,7 @@ impl FromData<u32> for MonthDay {
 }
 impl FromData<u8> for WeekDay {
     fn from_data(val: u8) -> Self {
-        assert!(val < 60);
+        assert!(val < 8 && val != 0);
         match val {
             1 => Self::W1,
             2 => Self::W2,
@@ -375,7 +377,7 @@ impl FromData<u8> for WeekDay {
 
 impl FromData<u32> for Hour {
     fn from_data(val: u32) -> Self {
-        assert!(val < 60);
+        assert!(val < 24);
         match val {
             0 => Self::H0,
             1 => Self::H1,
@@ -544,11 +546,43 @@ impl FromData<u64> for Second {
     }
 }
 
-// impl<U, T> From<T> for U
-// where
-//     U: FromData<T>,
-// {
-//     fn from(val: T) -> Self {
-//         // U::from(val)
-//     }
-// }
+impl TryFromData<u32> for MonthDay {
+    fn try_from_data(val: u32) -> Result<Self> {
+        if val == 0 || val > 31 {
+            bail!("month day should not be 0 or > 31");
+        }
+        Ok(MonthDay::from_data(val))
+    }
+}
+impl TryFromData<u8> for WeekDay {
+    fn try_from_data(val: u8) -> Result<Self> {
+        if val >= 8 || val == 0 {
+            bail!("week day should not be 0 or >= 60");
+        }
+        Ok(WeekDay::from_data(val))
+    }
+}
+impl TryFromData<u32> for Hour {
+    fn try_from_data(val: u32) -> Result<Self> {
+        if val >= 24 {
+            bail!("week day should not >= 24");
+        }
+        Ok(Hour::from_data(val))
+    }
+}
+impl TryFromData<u64> for Minuter {
+    fn try_from_data(val: u64) -> Result<Self> {
+        if val >= 60 {
+            bail!("minuter should not >= 60");
+        }
+        Ok(Minuter::from_data(val))
+    }
+}
+impl TryFromData<u64> for Second {
+    fn try_from_data(val: u64) -> Result<Self> {
+        if val >= 60 {
+            bail!("second should not >= 60");
+        }
+        Ok(Second::from_data(val))
+    }
+}
