@@ -143,7 +143,7 @@ pub struct MonthDays(u32);
 pub struct WeekDays(u8);
 #[derive(Clone)]
 pub struct Hours(u32);
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct Minuters(u64);
 #[derive(Clone)]
 pub struct Seconds(u64);
@@ -155,6 +155,7 @@ impl Operator for Hours {
     const DEFAULT_MAX: Self::ValTy = u32::MAX >> 8;
     type ValTy = u32;
     type DataTy = Hour;
+
     fn min_val(&self) -> Self::DataTy {
         Self::DataTy::from_data(self._min_val())
     }
@@ -171,6 +172,7 @@ impl Operator for Hours {
     fn _val_mut(&mut self, val: Self::ValTy) {
         self.0 = val
     }
+
 }
 impl Operator for Seconds {
     const MIN: Self::ValTy = 0;
@@ -249,6 +251,23 @@ impl Operator for MonthDays {
     }
 }
 
+impl Minuters {
+    pub fn every(interval: u64) -> Self {
+        if interval == 0 {
+            Self::_default()
+        } else {
+            let mut val = 0u64;
+            let mut minuters = Self::_default();
+            while val <= Self::MAX {
+                minuters = minuters.add(Minuter::from_data(val));
+                val += interval
+            }
+            minuters
+        }
+    }
+}
+
+/// 为啥不是实现Operator
 #[allow(dead_code)]
 impl WeekDays {
     const DEFAULT_MAX: u8 = u8::MAX << 1;
@@ -698,5 +717,22 @@ mod test {
                 break;
             }
         }
+    }
+    #[test]
+    fn test_every() {
+        use Minuter::*;
+        let minuters = Minuters::every(11);
+        assert_eq!(minuters, Minuters::default_array(&[M0, M11, M22, M33, M44, M55]));
+        let minuters = Minuters::every(0);
+        assert_eq!(minuters, Minuters::_default());
+        let minuters = Minuters::every(30);
+        assert_eq!(minuters, Minuters::default_array(&[M0, M30]));
+        let minuters = Minuters::every(31);
+        assert_eq!(minuters, Minuters::default_array(&[M0, M31]));
+        let minuters = Minuters::every(60);
+        assert_eq!(minuters, Minuters::default_array(&[M0]));
+
+        let minuters = Minuters::every(500);
+        assert_eq!(minuters, Minuters::default_array(&[M0]));
     }
 }
