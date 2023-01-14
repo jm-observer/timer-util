@@ -1,12 +1,12 @@
 use crate::conf::{Hours, Minuters, MonthDays, Seconds, WeekDays};
 use crate::data::{Hour, Minuter, MonthDay, Second, WeekDay};
-use crate::traits::{AsData, Computer, FromData, Operator};
+use crate::traits::{AsData, Computer, FromData, ConfigOperator};
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use log::debug;
 use std::cmp::Ordering;
 
 #[derive(Debug)]
-pub struct TimeUnit<T: Operator> {
+pub struct TimeUnit<T: ConfigOperator> {
     // 最大值
     // max: T::ValTy,
     // 当前的起始值
@@ -14,7 +14,7 @@ pub struct TimeUnit<T: Operator> {
     // 对应的配置
     conf: T,
     // 最后的值
-    val: T::ValTy,
+    val: u64,
 }
 #[derive(Debug)]
 pub struct DayUnit {
@@ -31,8 +31,7 @@ pub struct DayUnit {
 }
 
 impl Computer for DayUnit {
-    const MIN: Self::ValTy = 1;
-    type ValTy = u32;
+    const MIN: u64 = 1;
     type DataTy = MonthDay;
 
     fn update_to_next_ring(&mut self) {
@@ -49,8 +48,8 @@ impl Computer for DayUnit {
             self.conf = merge_days_conf(self.monthdays.clone(), self.weekdays.clone(), weekday);
             self.max = next_month.pred().day();
             self.day = self.conf.min_val();
-            if self.day.as_data() <= self.max {
-                self.val = self.day.as_data();
+            if self.day.as_data() as u32 <= self.max {
+                self.val = self.day.as_data() as u32;
                 break;
             }
         }
@@ -62,7 +61,7 @@ impl Computer for DayUnit {
 
     fn next_val(&self) -> Option<Self::DataTy> {
         if let Some(next) = self.conf.next(self.day) {
-            if next.as_data() > self.max {
+            if next.as_data() > self.max as u64 {
                 None
             } else {
                 Some(next)
@@ -77,10 +76,10 @@ impl Computer for DayUnit {
     }
 
     fn val_mut(&mut self, val: Self::DataTy) {
-        self.val = val.as_data();
+        self.val = val.as_data() as u32;
     }
 
-    fn val(&self) -> Self::ValTy {
+    fn val(&self) -> u64 {
         self.day.as_data()
     }
 }
@@ -117,9 +116,8 @@ pub fn merge_days_conf(
     conf
 }
 
-impl<T: Operator> Computer for TimeUnit<T> {
-    const MIN: Self::ValTy = <T as Operator>::MIN;
-    type ValTy = <T as Operator>::ValTy;
+impl<T: ConfigOperator> Computer for TimeUnit<T> {
+    const MIN: u64 = <T as ConfigOperator>::MIN;
     type DataTy = T::DataTy;
 
     fn update_to_next_ring(&mut self) {
@@ -140,12 +138,12 @@ impl<T: Operator> Computer for TimeUnit<T> {
         self.val = val.as_data();
     }
 
-    fn val(&self) -> Self::ValTy {
+    fn val(&self) -> u64 {
         self.val
     }
 }
 
-impl<T: Operator> TimeUnit<T> {
+impl<T: ConfigOperator> TimeUnit<T> {
     pub fn new(index: T::DataTy, conf: T) -> Self {
         let val = index;
         Self {
@@ -184,7 +182,7 @@ impl DayUnit {
             day: day.clone(),
             max,
             conf,
-            val: day.as_data(),
+            val: day.as_data() as u32,
         }
     }
 }
@@ -207,11 +205,11 @@ impl Composition {
     ) -> Self {
         let year = now.year();
         let month = now.month();
-        let day = MonthDay::from_data(now.day());
+        let day = MonthDay::from_data(now.day() as u64);
         let first_week_day: WeekDay = NaiveDate::from_ymd(year, month, 1).weekday().into();
         let max = next_month(year, month).pred().day();
         let day_unit = DayUnit::new(year, month, month_days, week_days, day, first_week_day, max);
-        let hour: TimeUnit<Hours> = TimeUnit::new(Hour::from_data(now.hour()), hours);
+        let hour: TimeUnit<Hours> = TimeUnit::new(Hour::from_data(now.hour() as u64), hours);
         let minuter = TimeUnit::new(Minuter::from_data(now.minute() as u64), min);
         let second = TimeUnit::new(Second::from_data(now.second() as u64), seconds);
         Composition::new(day_unit, hour, minuter, second)
@@ -245,7 +243,7 @@ impl Composition {
         NaiveDateTime::new(
             NaiveDate::from_ymd(self.day.year, self.day.month, self.day.val),
             NaiveTime::from_hms(
-                self.hour.val,
+                self.hour.val as u32,
                 self.minuter.val as u32,
                 self.second.val as u32,
             ),
@@ -325,59 +323,59 @@ pub fn next_month(mut year: i32, mut month: u32) -> NaiveDate {
     NaiveDate::from_ymd(year, month, 1)
 }
 
-#[derive(Eq, PartialEq, Debug)]
-pub struct WeekArray {
-    pub(crate) days: [i8; 7],
-}
-impl WeekArray {
-    pub(crate) fn init(start: WeekDay) -> Self {
-        let mut init_week = [1i8; 7];
-        if start.as_data() >= 2 {
-            let mut index = (start.as_data() - 2) as usize;
-            let mut diff = 1;
-            loop {
-                init_week[index] -= diff;
-                diff += 1;
-                if index == 0 {
-                    break;
-                }
-                index -= 1;
-            }
-        }
-        let mut index = (start.as_data()) as usize;
-        let mut diff = 1;
-        while index < 7 {
-            init_week[index] += diff;
-            diff += 1;
-            index += 1;
-        }
-        Self {
-            days: init_week,
-            // max,
-        }
-    }
-
-    pub(crate) fn day(&self, index: usize) -> Option<u32> {
-        let day = self.days[index];
-        if day > 0 && day <= 31 {
-            Some(day as u32)
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn next(&self) -> Option<Self> {
-        let mut days = self.days;
-        for i in days.iter_mut() {
-            *i = *i + 7;
-        }
-        if days[0] > 31 {
-            None
-        } else {
-            Some(Self { days })
-        }
-    }
-}
+// #[derive(Eq, PartialEq, Debug)]
+// pub struct WeekArray {
+//     pub(crate) days: [i8; 7],
+// }
+// impl WeekArray {
+//     pub(crate) fn init(start: WeekDay) -> Self {
+//         let mut init_week = [1i8; 7];
+//         if start.as_data() >= 2 {
+//             let mut index = (start.as_data() - 2) as usize;
+//             let mut diff = 1;
+//             loop {
+//                 init_week[index] -= diff;
+//                 diff += 1;
+//                 if index == 0 {
+//                     break;
+//                 }
+//                 index -= 1;
+//             }
+//         }
+//         let mut index = (start.as_data()) as usize;
+//         let mut diff = 1;
+//         while index < 7 {
+//             init_week[index] += diff;
+//             diff += 1;
+//             index += 1;
+//         }
+//         Self {
+//             days: init_week,
+//             // max,
+//         }
+//     }
+//
+//     pub(crate) fn day(&self, index: usize) -> Option<u64> {
+//         let day = self.days[index];
+//         if day > 0 && day <= 31 {
+//             Some(day as u64)
+//         } else {
+//             None
+//         }
+//     }
+//
+//     pub(crate) fn next(&self) -> Option<Self> {
+//         let mut days = self.days;
+//         for i in days.iter_mut() {
+//             *i = *i + 7;
+//         }
+//         if days[0] > 31 {
+//             None
+//         } else {
+//             Some(Self { days })
+//         }
+//     }
+// }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct YearMonth {
@@ -407,7 +405,6 @@ impl PartialOrd for YearMonth {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct A<'a> {
     // day_first_index: usize,
@@ -698,105 +695,105 @@ mod test {
     use crate::traits::Computer;
     use crate::*;
 
-    #[test]
-    fn test_init_first_week() {
-        assert_eq!(
-            WeekArray::init(W3),
-            WeekArray {
-                days: [-1, 0, 1, 2, 3, 4, 5],
-            }
-        );
-        assert_eq!(
-            WeekArray::init(W1),
-            WeekArray {
-                days: [1, 2, 3, 4, 5, 6, 7],
-            }
-        );
-        assert_eq!(
-            WeekArray::init(W7),
-            WeekArray {
-                days: [-5, -4, -3, -2, -1, 0, 1],
-            }
-        );
-        {
-            let next = WeekArray::init(W7).next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [2, 3, 4, 5, 6, 7, 8]);
-
-            let next = next.next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [9, 10, 11, 12, 13, 14, 15]);
-
-            let next = next.next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [16, 17, 18, 19, 20, 21, 22]);
-
-            let next = next.next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [23, 24, 25, 26, 27, 28, 29]);
-
-            let next = next.next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [30, 31, 32, 33, 34, 35, 36]);
-
-            let next = next.next();
-            assert!(next.is_none());
-        }
-        {
-            let next = WeekArray::init(W3).next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [6, 7, 8, 9, 10, 11, 12]);
-
-            let next = next.next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [13, 14, 15, 16, 17, 18, 19]);
-
-            let next = next.next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [20, 21, 22, 23, 24, 25, 26]);
-
-            let next = next.next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [27, 28, 29, 30, 31, 32, 33]);
-
-            let next = next.next();
-            assert!(next.is_none());
-        }
-
-        {
-            let next = WeekArray::init(W1).next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [8, 9, 10, 11, 12, 13, 14]);
-
-            let next = next.next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [15, 16, 17, 18, 19, 20, 21]);
-
-            let next = next.next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [22, 23, 24, 25, 26, 27, 28]);
-
-            let next = next.next();
-            assert!(next.is_some());
-            let next = next.unwrap();
-            assert_eq!(next.days, [29, 30, 31, 32, 33, 34, 35]);
-
-            let next = next.next();
-            assert!(next.is_none());
-        }
-    }
+    // #[test]
+    // fn test_init_first_week() {
+    //     assert_eq!(
+    //         WeekArray::init(W3),
+    //         WeekArray {
+    //             days: [-1, 0, 1, 2, 3, 4, 5],
+    //         }
+    //     );
+    //     assert_eq!(
+    //         WeekArray::init(W1),
+    //         WeekArray {
+    //             days: [1, 2, 3, 4, 5, 6, 7],
+    //         }
+    //     );
+    //     assert_eq!(
+    //         WeekArray::init(W7),
+    //         WeekArray {
+    //             days: [-5, -4, -3, -2, -1, 0, 1],
+    //         }
+    //     );
+    //     {
+    //         let next = WeekArray::init(W7).next();
+    //         assert!(next.is_some());
+    //         let next = next.unwrap();
+    //         assert_eq!(next.days, [2, 3, 4, 5, 6, 7, 8]);
+    //
+    //         let next = next.next();
+    //         assert!(next.is_some());
+    //         let next = next.unwrap();
+    //         assert_eq!(next.days, [9, 10, 11, 12, 13, 14, 15]);
+    //
+    //         let next = next.next();
+    //         assert!(next.is_some());
+    //         let next = next.unwrap();
+    //         assert_eq!(next.days, [16, 17, 18, 19, 20, 21, 22]);
+    //
+    //         let next = next.next();
+    //         assert!(next.is_some());
+    //         let next = next.unwrap();
+    //         assert_eq!(next.days, [23, 24, 25, 26, 27, 28, 29]);
+    //
+    //         let next = next.next();
+    //         assert!(next.is_some());
+    //         let next = next.unwrap();
+    //         assert_eq!(next.days, [30, 31, 32, 33, 34, 35, 36]);
+    //
+    //         let next = next.next();
+    //         assert!(next.is_none());
+    //     }
+    //     {
+    //         let next = WeekArray::init(W3).next();
+    //         assert!(next.is_some());
+    //         let next = next.unwrap();
+    //         assert_eq!(next.days, [6, 7, 8, 9, 10, 11, 12]);
+    //
+    //         let next = next.next();
+    //         assert!(next.is_some());
+    //         let next = next.unwrap();
+    //         assert_eq!(next.days, [13, 14, 15, 16, 17, 18, 19]);
+    //
+    //         let next = next.next();
+    //         assert!(next.is_some());
+    //         let next = next.unwrap();
+    //         assert_eq!(next.days, [20, 21, 22, 23, 24, 25, 26]);
+    //
+    //         let next = next.next();
+    //         assert!(next.is_some());
+    //         let next = next.unwrap();
+    //         assert_eq!(next.days, [27, 28, 29, 30, 31, 32, 33]);
+    //
+    //         let next = next.next();
+    //         assert!(next.is_none());
+    //     }
+    //
+    //     {
+    //         let next = WeekArray::init(W1).next();
+    //         assert!(next.is_some());
+    //         let next = next.unwrap();
+    //         assert_eq!(next.days, [8, 9, 10, 11, 12, 13, 14]);
+    //
+    //         let next = next.next();
+    //         assert!(next.is_some());
+    //         let next = next.unwrap();
+    //         assert_eq!(next.days, [15, 16, 17, 18, 19, 20, 21]);
+    //
+    //         let next = next.next();
+    //         assert!(next.is_some());
+    //         let next = next.unwrap();
+    //         assert_eq!(next.days, [22, 23, 24, 25, 26, 27, 28]);
+    //
+    //         let next = next.next();
+    //         assert!(next.is_some());
+    //         let next = next.unwrap();
+    //         assert_eq!(next.days, [29, 30, 31, 32, 33, 34, 35]);
+    //
+    //         let next = next.next();
+    //         assert!(next.is_none());
+    //     }
+    // }
 
     #[test]
     fn test_time_unit_second() {

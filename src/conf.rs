@@ -1,13 +1,14 @@
 use crate::compute::Composition;
-use crate::compute::{merge_days_conf, WeekArray, YearMonth, A};
+use crate::compute::{merge_days_conf, YearMonth, A};
 use crate::data::{Hour, Minuter, MonthDay, Second, WeekDay};
-use crate::traits::{AsData, FromData, Operator};
+use crate::traits::{FromData, ConfigOperator};
 use anyhow::{bail, Result};
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, Timelike};
 use log::debug;
 use std::fmt::{Debug, Formatter};
 use std::ops::{Add, Bound, RangeBounds, Sub};
 
+/// 定时器配置
 #[derive(Debug, Clone)]
 pub struct TimerConf {
     pub(crate) month_days: Option<MonthDays>,
@@ -18,6 +19,7 @@ pub struct TimerConf {
 }
 
 impl TimerConf {
+    /// 在给定的日期时间范围内，返回符合定时器的所有时间点
     pub fn datetimes(&self, range: impl RangeBounds<NaiveDateTime>) -> Result<Vec<NaiveDateTime>> {
         // 转成 a..=b
         let start = match range.start_bound() {
@@ -36,7 +38,7 @@ impl TimerConf {
         let mut start_year_month = YearMonth::new(start.year(), start.month());
         let start_tmp = start_year_month.clone();
         let end_year_month = YearMonth::new(end.year(), end.month());
-        let hours = self.hours.to_vec();
+        let hours: Vec<u32> = self.hours.to_vec().into_iter().map(|x| x as u32).collect();
         let mins: Vec<u32> = self
             .minuters
             .to_vec()
@@ -51,7 +53,7 @@ impl TimerConf {
             .collect::<Vec<u32>>();
         let mut datetime = Vec::default();
         while start_year_month <= end_year_month {
-            let days = self.datetime_by_month(&start_year_month).to_vec();
+            let days: Vec<u32> = self.datetime_by_month(&start_year_month).to_vec().into_iter().map(|x| x as u32).collect();
             let mut a = A::new(
                 days.as_slice(),
                 hours.as_slice(),
@@ -89,7 +91,7 @@ impl TimerConf {
         let max = NaiveDate::from_ymd(next_month.year, next_month.month, 1)
             .sub(Duration::days(1))
             .day();
-        let month_all = MonthDays::default_all_by_max(MonthDay::from_data(max));
+        let month_all = MonthDays::default_all_by_max(MonthDay::from_data(max as u64));
         merge_days_conf(
             self.month_days.clone(),
             self.week_days.clone(),
@@ -97,6 +99,8 @@ impl TimerConf {
         )
         .intersection(&month_all)
     }
+
+    /// 以给定的时间点为起点，返回下个符合定时器的时间点
     pub fn next_with_time(&self, now: NaiveDateTime) -> NaiveDateTime {
         let now = now.add(Duration::seconds(1));
         let mut composition = Composition::from(
@@ -111,6 +115,7 @@ impl TimerConf {
         let next = composition.next();
         next
     }
+    /// 以当前时间点为起点，返回距离下个符合时间点的时间间隔（s）
     pub fn next(&self) -> u64 {
         let now_local = Local::now().naive_local();
         let next_local = self.next_with_time(now_local);
@@ -136,24 +141,25 @@ impl TimerConf {
         times
     }
 }
-
+/// 每月的天数配置。如配置（选中）1号、3号……29号
 #[derive(Clone)]
-pub struct MonthDays(u32);
+pub struct MonthDays(u64);
+/// 每星期的天数配置。如配置（选中）周一……周六
 #[derive(Clone)]
-pub struct WeekDays(u8);
+pub struct WeekDays(u64);
+/// 每天的小时（时钟）配置。如配置（选中）0点、3点、9点、……18点
 #[derive(Clone)]
-pub struct Hours(u32);
+pub struct Hours(u64);
+/// 每小时的分钟配置。如配置（选中）0分、5分……58分
 #[derive(Clone, Eq, PartialEq)]
 pub struct Minuters(u64);
+/// 每分钟的秒钟配置。如配置（选中）0秒、5秒……58秒
 #[derive(Clone)]
 pub struct Seconds(u64);
-impl Operator for Hours {
-    const MIN: Self::ValTy = 0;
-    const MAX: Self::ValTy = 23;
-    const ONE: Self::ValTy = 1;
-    const ZERO: Self::ValTy = 0;
-    const DEFAULT_MAX: Self::ValTy = u32::MAX >> 8;
-    type ValTy = u32;
+impl ConfigOperator for Hours {
+    const MIN: u64 = 0;
+    const MAX: u64 = 23;
+    const DEFAULT_MAX: u64 = (u32::MAX >> 8) as u64;
     type DataTy = Hour;
 
     fn min_val(&self) -> Self::DataTy {
@@ -162,25 +168,22 @@ impl Operator for Hours {
     fn _default() -> Self {
         Self(0)
     }
-    fn _val(&self) -> Self::ValTy {
+    fn _val(&self) -> u64 {
         self.0
     }
     fn next(&self, index: Self::DataTy) -> Option<Self::DataTy> {
         self._next(index)
             .and_then(|x| Some(Self::DataTy::from_data(x)))
     }
-    fn _val_mut(&mut self, val: Self::ValTy) {
+    fn _val_mut(&mut self, val: u64) {
         self.0 = val
     }
 
 }
-impl Operator for Seconds {
-    const MIN: Self::ValTy = 0;
-    const MAX: Self::ValTy = 59;
-    const ONE: Self::ValTy = 1;
-    const ZERO: Self::ValTy = 0;
-    const DEFAULT_MAX: Self::ValTy = u64::MAX >> 4;
-    type ValTy = u64;
+impl ConfigOperator for Seconds {
+    const MIN: u64 = 0;
+    const MAX: u64 = 59;
+    const DEFAULT_MAX: u64 = u64::MAX >> 4;
     type DataTy = Second;
     fn min_val(&self) -> Self::DataTy {
         Self::DataTy::from_data(self._min_val())
@@ -192,20 +195,17 @@ impl Operator for Seconds {
     fn _default() -> Self {
         Self(0)
     }
-    fn _val(&self) -> Self::ValTy {
+    fn _val(&self) -> u64 {
         self.0
     }
-    fn _val_mut(&mut self, val: Self::ValTy) {
+    fn _val_mut(&mut self, val: u64) {
         self.0 = val
     }
 }
-impl Operator for Minuters {
-    const MIN: Self::ValTy = 0;
-    const MAX: Self::ValTy = 59;
-    const ONE: Self::ValTy = 1;
-    const ZERO: Self::ValTy = 0;
-    const DEFAULT_MAX: Self::ValTy = u64::MAX >> 4;
-    type ValTy = u64;
+impl ConfigOperator for Minuters {
+    const MIN: u64 = 0;
+    const MAX: u64 = 59;
+    const DEFAULT_MAX: u64 = u64::MAX >> 4;
     type DataTy = Minuter;
     fn min_val(&self) -> Self::DataTy {
         Self::DataTy::from_data(self._min_val())
@@ -217,21 +217,18 @@ impl Operator for Minuters {
     fn _default() -> Self {
         Self(0)
     }
-    fn _val(&self) -> Self::ValTy {
+    fn _val(&self) -> u64 {
         self.0
     }
-    fn _val_mut(&mut self, val: Self::ValTy) {
+    fn _val_mut(&mut self, val: u64) {
         self.0 = val
     }
 }
 
-impl Operator for MonthDays {
-    const MIN: Self::ValTy = 1;
-    const MAX: Self::ValTy = 31;
-    const ONE: Self::ValTy = 1;
-    const ZERO: Self::ValTy = 0;
-    const DEFAULT_MAX: Self::ValTy = u32::MAX << 1;
-    type ValTy = u32;
+impl ConfigOperator for MonthDays {
+    const MIN: u64 = 1;
+    const MAX: u64 = 31;
+    const DEFAULT_MAX: u64 = (u32::MAX << 1) as u64;
     type DataTy = MonthDay;
     fn next(&self, index: Self::DataTy) -> Option<Self::DataTy> {
         self._next(index)
@@ -243,10 +240,10 @@ impl Operator for MonthDays {
     fn min_val(&self) -> Self::DataTy {
         Self::DataTy::from_data(self._min_val())
     }
-    fn _val(&self) -> Self::ValTy {
+    fn _val(&self) -> u64 {
         self.0
     }
-    fn _val_mut(&mut self, val: Self::ValTy) {
+    fn _val_mut(&mut self, val: u64) {
         self.0 = val
     }
 }
@@ -267,106 +264,63 @@ impl Minuters {
     }
 }
 
-/// 为啥不是实现Operator
-#[allow(dead_code)]
-impl WeekDays {
-    const DEFAULT_MAX: u8 = u8::MAX << 1;
-    const ONE: u8 = 1;
-    const ZERO: u8 = 0;
-    const MIN: u8 = 1;
-    const MAX: u8 = 7;
+impl ConfigOperator for WeekDays {
+    const DEFAULT_MAX: u64 = (u8::MAX << 1) as u64;
+    const MIN: u64 = 1;
+    const MAX: u64 = 7;
 
-    pub(crate) fn to_month_days(&self, start: WeekDay) -> MonthDays {
-        let mut next = Some(WeekArray::init(start));
-        let conf_week_days = self.to_vec();
-
-        let mut monthdays = MonthDays::_default();
-        while let Some(ref weekday) = next {
-            for x in &conf_week_days {
-                if let Some(day) = weekday.day(*x) {
-                    monthdays = monthdays.add(MonthDay::from_data(day));
-                }
-            }
-            next = weekday.next();
-        }
-        monthdays
-    }
+    type DataTy = WeekDay;
 
     fn _default() -> Self {
         Self(0)
     }
-    #[inline]
-    pub fn default_value(val: WeekDay) -> Self {
-        let ins = Self::_default();
-        ins.add(val)
+
+    fn min_val(&self) -> Self::DataTy {
+        Self::DataTy::from_data(self._min_val())
     }
-    #[inline]
-    pub fn default_range(range: impl RangeBounds<WeekDay>) -> Result<Self> {
-        let ins = Self::_default();
-        ins.add_range(range)
+    fn next(&self, index: Self::DataTy) -> Option<Self::DataTy> {
+        self._next(index)
+            .and_then(|x| Some(Self::DataTy::from_data(x)))
     }
-    #[inline]
-    pub fn default_all() -> Self {
-        let mut ins = Self::_default();
-        ins._val_mut(Self::DEFAULT_MAX);
-        ins
+
+    fn _val(&self) -> u64 {
+        self.0
     }
-    pub fn default_array(vals: &[WeekDay]) -> Self {
-        let ins = Self::_default();
-        ins.add_array(vals)
-    }
-    pub fn add_array(mut self, vals: &[WeekDay]) -> Self {
-        let mut val = self._val();
-        for i in vals {
-            val |= Self::ONE << i.as_data();
-        }
-        self._val_mut(val);
-        self
-    }
-    pub fn add(mut self, index: WeekDay) -> Self {
-        let index = index.as_data();
-        self._val_mut(self._val() | (Self::ONE << index));
-        self
-    }
-    pub fn add_range(mut self, range: impl RangeBounds<WeekDay>) -> Result<Self> {
-        let mut first = match range.start_bound() {
-            Bound::Unbounded => Self::MIN,
-            Bound::Included(first) => first.as_data(),
-            Bound::Excluded(first) => first.as_data() + Self::ONE,
-        };
-        let end = match range.end_bound() {
-            Bound::Unbounded => Self::MAX,
-            Bound::Included(end) => end.as_data(),
-            Bound::Excluded(end) => end.as_data() - Self::ONE,
-        };
-        if first > end {
-            bail!("error:{} > {}", first, end);
-        }
-        let mut val = self._val();
-        while first <= end {
-            val |= Self::ONE << first;
-            first += Self::ONE;
-        }
-        self._val_mut(val);
-        Ok(self)
-    }
-    fn to_vec(&self) -> Vec<usize> {
-        let mut res = Vec::new();
-        let val = self._val();
-        let mut first = Self::MIN;
-        while first <= Self::MAX {
-            if (val & (Self::ONE << first)) > Self::ZERO {
-                res.push((first - 1) as usize);
-            }
-            first += Self::ONE;
-        }
-        res
-    }
-    fn _val_mut(&mut self, val: u8) {
+
+    fn _val_mut(&mut self, val: u64) {
         self.0 = val;
     }
-    fn _val(&self) -> u8 {
-        self.0
+}
+
+/// 为啥不是实现Operator
+#[allow(dead_code)]
+impl WeekDays {
+    pub(crate) fn to_month_days(&self, start: WeekDay) -> MonthDays {
+        // 因WeekDays起始位置为1,右移去掉冗余的0位
+        let week_unit = self.0 >> 1;
+        // 按7天，拼出足够长的天数（保证下一步截断后，总天数>= 31）
+        // 按起始星期几截断
+        // 因MonthDays起始位置为1,再左移1位
+        let days = (week_unit | week_unit << 7 | week_unit << 14 | week_unit << 21 | week_unit << 28 | week_unit << 35) >> (start as u64 - 1) << 1;
+
+        let mut month_days = MonthDays::_default();
+        month_days._val_mut(days);
+        month_days
+        //
+        //
+        // let mut next = Some(WeekArray::init(start));
+        // let conf_week_days = self.to_vec();
+        //
+        // let mut monthdays = MonthDays::_default();
+        // while let Some(ref weekday) = next {
+        //     for x in &conf_week_days {
+        //         if let Some(day) = weekday.day(*x as usize) {
+        //             monthdays = monthdays.add(MonthDay::from_data(day));
+        //         }
+        //     }
+        //     next = weekday.next();
+        // }
+        // monthdays
     }
 }
 //
@@ -411,7 +365,7 @@ impl Debug for Minuters {
 }
 impl Debug for Hours {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if self.0 == u32::MAX >> 8 {
+        if self.0 == (u32::MAX >> 8) as u64 {
             write!(f, "all hours.")
         } else {
             write!(f, "hours: {:?}.", self.to_vec())
@@ -420,7 +374,7 @@ impl Debug for Hours {
 }
 impl Debug for MonthDays {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if self.0 == u32::MAX << 1 {
+        if self.0 == (u32::MAX << 1) as u64 {
             write!(f, "all month days.")
         } else {
             write!(f, "month days: {:?}.", self.to_vec())
@@ -429,7 +383,7 @@ impl Debug for MonthDays {
 }
 impl Debug for WeekDays {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if self.0 == u8::MAX << 1 {
+        if self.0 == (u8::MAX << 1) as u64 {
             write!(f, "all week days.")
         } else {
             write!(f, "week day's array index: {:?}.", self.to_vec())
@@ -439,7 +393,7 @@ impl Debug for WeekDays {
 
 #[cfg(test)]
 mod test {
-    use super::{Hours, Minuters, MonthDays, Operator, Seconds, WeekDays};
+    use super::{Hours, Minuters, MonthDays, ConfigOperator, Seconds, WeekDays};
     use crate::compute::datetime;
     use crate::conf::TimerConf;
     #[allow(unused_imports)]

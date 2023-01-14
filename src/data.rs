@@ -15,7 +15,7 @@ pub(crate) struct DateTime {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(u8)]
+#[repr(u64)]
 pub enum WeekDay {
     W1 = 1,
     W2,
@@ -27,7 +27,7 @@ pub enum WeekDay {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(u32)]
+#[repr(u64)]
 pub enum MonthDay {
     D1 = 1,
     D2,
@@ -63,7 +63,7 @@ pub enum MonthDay {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(u32)]
+#[repr(u64)]
 pub enum Hour {
     H0 = 0,
     H1,
@@ -246,9 +246,9 @@ impl From<NaiveDateTime> for DateTime {
         let date = tmp.date();
         let time = tmp.time();
 
-        let month_day = MonthDay::from_data(date.day());
+        let month_day = MonthDay::from_data(date.day() as u64);
         let week_day: WeekDay = date.weekday().into();
-        let hour = Hour::from_data(time.hour());
+        let hour = Hour::from_data(time.hour() as u64);
         let minuter = Minuter::from_data(time.minute() as u64);
         let second = Second::from_data(time.second() as u64);
         Self {
@@ -266,7 +266,7 @@ impl From<DateTime> for NaiveDateTime {
         NaiveDateTime::new(
             tmp.date,
             NaiveTime::from_hms(
-                tmp.hour.as_data(),
+                tmp.hour.as_data() as u32,
                 tmp.minuter.as_data() as u32,
                 tmp.second.as_data() as u32,
             ),
@@ -274,19 +274,19 @@ impl From<DateTime> for NaiveDateTime {
     }
 }
 
-impl AsData<u8> for WeekDay {
-    fn as_data(self) -> u8 {
-        self as u8
+impl AsData<u64> for WeekDay {
+    fn as_data(self) -> u64 {
+        self as u64
     }
 }
-impl AsData<u32> for MonthDay {
-    fn as_data(self) -> u32 {
-        self as u32
+impl AsData<u64> for MonthDay {
+    fn as_data(self) -> u64 {
+        self as u64
     }
 }
-impl AsData<u32> for Hour {
-    fn as_data(self) -> u32 {
-        self as u32
+impl AsData<u64> for Hour {
+    fn as_data(self) -> u64 {
+        self as u64
     }
 }
 impl AsData<u64> for Minuter {
@@ -320,8 +320,8 @@ impl From<CWeekday> for WeekDay {
     }
 }
 
-impl FromData<u32> for MonthDay {
-    fn from_data(val: u32) -> Self {
+impl FromData<u64> for MonthDay {
+    fn from_data(val: u64) -> Self {
         assert!(val < 32 && val != 0);
         match val {
             1 => Self::D1,
@@ -359,8 +359,8 @@ impl FromData<u32> for MonthDay {
         }
     }
 }
-impl FromData<u8> for WeekDay {
-    fn from_data(val: u8) -> Self {
+impl FromData<u64> for WeekDay {
+    fn from_data(val: u64) -> Self {
         assert!(val < 8 && val != 0);
         match val {
             1 => Self::W1,
@@ -375,8 +375,8 @@ impl FromData<u8> for WeekDay {
     }
 }
 
-impl FromData<u32> for Hour {
-    fn from_data(val: u32) -> Self {
+impl FromData<u64> for Hour {
+    fn from_data(val: u64) -> Self {
         assert!(val < 24);
         match val {
             0 => Self::H0,
@@ -546,24 +546,24 @@ impl FromData<u64> for Second {
     }
 }
 
-impl TryFromData<u32> for MonthDay {
-    fn try_from_data(val: u32) -> Result<Self> {
+impl TryFromData<u64> for MonthDay {
+    fn try_from_data(val: u64) -> Result<Self> {
         if val == 0 || val > 31 {
             bail!("month day should not be 0 or > 31");
         }
         Ok(MonthDay::from_data(val))
     }
 }
-impl TryFromData<u8> for WeekDay {
-    fn try_from_data(val: u8) -> Result<Self> {
+impl TryFromData<u64> for WeekDay {
+    fn try_from_data(val: u64) -> Result<Self> {
         if val >= 8 || val == 0 {
             bail!("week day should not be 0 or >= 60");
         }
         Ok(WeekDay::from_data(val))
     }
 }
-impl TryFromData<u32> for Hour {
-    fn try_from_data(val: u32) -> Result<Self> {
+impl TryFromData<u64> for Hour {
+    fn try_from_data(val: u64) -> Result<Self> {
         if val >= 24 {
             bail!("week day should not >= 24");
         }
