@@ -221,33 +221,6 @@ pub enum Second {
     S59,
 }
 
-impl Second {
-    const STORE_MAX: u64 = 1 << 59;
-    const STORE_MIN: u64 = 1;
-    pub(crate) fn store_val(&self) -> u64 {
-        1 << (*self as u64)
-    }
-    pub(crate) fn next_store_val(&self) -> Option<u64> {
-        if *self == Self::S59 {
-            None
-        } else {
-            Some(self.store_val() << 1)
-        }
-    }
-}
-
-//
-// #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-// pub(crate) struct InnerWeekDay(pub(crate) u8);
-// #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-// pub(crate) struct InnerMonthDay(pub(crate) u32);
-// #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-// pub(crate) struct InnerHour(pub(crate) u32);
-// #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-// pub(crate) struct InnerMinuter(pub(crate) u64);
-// #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-// pub(crate) struct InnerSecond(pub(crate) u64);
-
 impl DateTime {
     #[allow(dead_code)]
     pub(crate) fn default() -> Result<Self> {

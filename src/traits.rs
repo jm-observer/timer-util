@@ -152,6 +152,11 @@ pub trait ConfigOperator: Sized {
     }
     fn _val(&self) -> u64;
     fn _val_mut(&mut self, val: u64);
+
+    /// 是否啥都没有选
+    fn is_zero(&self) -> bool {
+        self._val() == 0
+    }
 }
 
 pub trait AsBizData<Ty>: Copy {

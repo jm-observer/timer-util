@@ -52,6 +52,15 @@ pub struct DayHourMinuterConfBuilder {
 }
 impl DayHourMinuterConfBuilder {
     pub fn build_with_second(self, seconds: Seconds) -> TimerConf {
+        // if seconds.is_zero() {
+        //     bail!("second must be selected")
+        // } else if self.minuters.is_zero() {
+        //     bail!("minuter must be selected")
+        // } else if self.hours.is_zero() {
+        //     bail!("hour must be selected")
+        // } else if self.days.is_zero() {
+        //     bail!("day must be selected")
+        // }
         TimerConf {
             days: self.days,
             hours: self.hours,

@@ -1,9 +1,8 @@
 use crate::compute::Composition;
-use crate::compute::{merge_days_conf, YearMonth, A};
 use crate::data::{Hour, Minuter, MonthDay, Second, WeekDay};
 use crate::traits::{FromData, ConfigOperator};
 use anyhow::{bail, Result};
-use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, Timelike};
+use chrono::{Datelike, Duration, Local, NaiveDateTime, Timelike};
 use log::debug;
 use std::fmt::{Debug, Formatter};
 use std::ops::{Add, Bound, RangeBounds, Sub};
@@ -18,10 +17,11 @@ pub struct TimerConf {
 }
 
 impl TimerConf {
+
     /// 在给定的日期时间范围内，返回符合定时器的所有时间点
     pub fn datetimes(&self, range: impl RangeBounds<NaiveDateTime>) -> Result<Vec<NaiveDateTime>> {
         // 转成 a..=b
-        let start = match range.start_bound() {
+        let mut start = match range.start_bound() {
             Bound::Unbounded => bail!("不支持该模式"),
             Bound::Included(first) => first.sub(Duration::seconds(1)),
             Bound::Excluded(first) => first.clone(),
@@ -34,68 +34,19 @@ impl TimerConf {
         if start >= end {
             bail!("起始-结束日期配置错误")
         }
-        let mut start_year_month = YearMonth::new(start.year(), start.month());
-        let start_tmp = start_year_month.clone();
-        let end_year_month = YearMonth::new(end.year(), end.month());
-        let hours: Vec<u32> = self.hours.to_vec().into_iter().map(|x| x as u32).collect();
-        let mins: Vec<u32> = self
-            .minuters
-            .to_vec()
-            .into_iter()
-            .map(|x| x as u32)
-            .collect::<Vec<u32>>();
-        let seconds: Vec<u32> = self
-            .seconds
-            .to_vec()
-            .into_iter()
-            .map(|x| x as u32)
-            .collect::<Vec<u32>>();
-        let mut datetime = Vec::default();
-        while start_year_month <= end_year_month {
-            let days: Vec<u32> = self.datetime_by_month(&start_year_month).to_vec().into_iter().map(|x| x as u32).collect();
-            let mut a = A::new(
-                days.as_slice(),
-                hours.as_slice(),
-                mins.as_slice(),
-                seconds.as_slice(),
-            );
-
-            debug!("{:?}", a);
-            if start_year_month == start_tmp {
-                if !a.filter_bigger(start.day(), start.hour(), start.minute(), start.second()) {
-                    start_year_month.add_month();
-                    continue;
-                }
+        let mut date_times = Vec::new();
+        while start <= end {
+            let next = self.next_with_time(start);
+            if next <= end {
+                date_times.push(next);
+                start = next;
+            } else {
+                break;
             }
-            debug!("{:?}", a);
-            if start_year_month == end_year_month {
-                if !a.filter_small(end.day(), end.hour(), end.minute(), end.second()) {
-                    start_year_month.add_month();
-                    continue;
-                }
-            }
-            debug!("{:?}", a);
-            datetime.append(&mut a.generate_datetime(&start_year_month));
-            start_year_month.add_month();
         }
-        Ok(datetime)
+        Ok(date_times)
     }
-    fn datetime_by_month(&self, year_month: &YearMonth) -> MonthDays {
-        let first_week_day: WeekDay = NaiveDate::from_ymd(year_month.year, year_month.month, 1)
-            .weekday()
-            .into();
-        let mut next_month = year_month.clone();
-        next_month.add_month();
-
-        let max = NaiveDate::from_ymd(next_month.year, next_month.month, 1)
-            .sub(Duration::days(1))
-            .day();
-        let month_all = MonthDays::default_all_by_max(MonthDay::from_data(max as u64));
-        self.days.month_days(first_week_day)
-        .intersection(&month_all)
-    }
-
-    /// 以给定的时间点为起点，返回下个符合定时器的时间点
+    /// 以给定的时间点为起点(不包含该时点)，返回下个符合定时器的时间点
     pub fn next_with_time(&self, now: NaiveDateTime) -> NaiveDateTime {
         let now = now.add(Duration::seconds(1));
         let mut composition = Composition::from(
@@ -166,6 +117,13 @@ impl Days {
             Days::MonthAndWeekDays(month_days, _) => {Self::MonthAndWeekDays(month_days, week_days)}
         }
     }
+    // pub(crate) fn is_zero(&self) -> bool {
+    //     match self {
+    //         Days::MonthDays(month_days) => month_days.is_zero(),
+    //         Days::WeekDays(week_days) => week_days.is_zero(),
+    //         Days::MonthAndWeekDays(month_days, week_days) => month_days.is_zero() || week_days.is_zero()
+    //     }
+    // }
 }
 
 
@@ -422,15 +380,29 @@ impl Debug for WeekDays {
 #[cfg(test)]
 mod test {
     use super::{Hours, Minuters, MonthDays, ConfigOperator, Seconds, WeekDays};
-    use crate::compute::datetime;
     use crate::conf::TimerConf;
     #[allow(unused_imports)]
     use crate::data::{DateTime, Hour::*, Minuter::*, MonthDay::*, Second::*, WeekDay::*};
     use crate::*;
     use anyhow::Result;
-    use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime};
+    use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime};
     use log::debug;
     use std::ops::Sub;
+
+
+    pub(crate) fn datetime(
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        min: u32,
+        second: u32,
+    ) -> NaiveDateTime {
+        NaiveDateTime::new(
+            NaiveDate::from_ymd(year, month, day),
+            NaiveTime::from_hms(hour, min, second),
+        )
+    }
 
     #[test]
     fn test_auto() -> anyhow::Result<()> {
@@ -448,6 +420,7 @@ mod test {
         let mut start = datetime(2022, 7, 4, 20, 15, 0);
         let end = datetime(2033, 8, 15, 12, 30, 45);
 
+        // let datetimes = conf.datetimes(start.clone()..end)?;
         let datetimes = conf.datetimes(start.clone()..end)?;
         start = start.sub(Duration::seconds(1));
         let mut next = end;
@@ -466,6 +439,7 @@ mod test {
 
         let mut start = datetime(2022, 7, 4, 20, 15, 0);
         let end = datetime(2033, 8, 15, 15, 30, 0);
+        // let datetimes = conf.datetimes(start.clone()..end.clone())?;
         let datetimes = conf.datetimes(start.clone()..end.clone())?;
         start = start.sub(Duration::seconds(1));
         let mut next = start.clone();
@@ -499,6 +473,7 @@ mod test {
         let start = datetime(2022, 7, 4, 22, 17, 10);
         let end = datetime(2022, 7, 5, 12, 30, 45);
 
+        // let datetimes = conf.datetimes(start.clone()..end)?;
         let datetimes = conf.datetimes(start.clone()..end)?;
         debug!("{:?}", datetimes);
         Ok(())
@@ -546,6 +521,8 @@ mod test {
             .build_with_minuter(Minuters::default_array(&[M15, M30, M45]))
             .build_with_second(Seconds::default_array(&[S15, S30, S45]));
         debug!("2020-5-15 10:30:17");
+        // let datetimes =
+        //     conf.datetimes(datetime(2020, 5, 15, 10, 30, 17)..=datetime(2020, 5, 15, 15, 30, 30))?;
         let datetimes =
             conf.datetimes(datetime(2020, 5, 15, 10, 30, 17)..=datetime(2020, 5, 15, 15, 30, 30))?;
 
