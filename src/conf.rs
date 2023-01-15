@@ -11,8 +11,7 @@ use std::ops::{Add, Bound, RangeBounds, Sub};
 /// 定时器配置
 #[derive(Debug, Clone)]
 pub struct TimerConf {
-    pub(crate) month_days: Option<MonthDays>,
-    pub(crate) week_days: Option<WeekDays>,
+    pub(crate) days: Days,
     pub(crate) hours: Hours,
     pub(crate) minuters: Minuters,
     pub(crate) seconds: Seconds,
@@ -92,11 +91,7 @@ impl TimerConf {
             .sub(Duration::days(1))
             .day();
         let month_all = MonthDays::default_all_by_max(MonthDay::from_data(max as u64));
-        merge_days_conf(
-            self.month_days.clone(),
-            self.week_days.clone(),
-            first_week_day,
-        )
+        self.days.month_days(first_week_day)
         .intersection(&month_all)
     }
 
@@ -105,8 +100,7 @@ impl TimerConf {
         let now = now.add(Duration::seconds(1));
         let mut composition = Composition::from(
             now,
-            self.month_days.clone(),
-            self.week_days.clone(),
+            self.days.clone(),
             self.hours.clone(),
             self.minuters.clone(),
             self.seconds.clone(),
@@ -141,6 +135,40 @@ impl TimerConf {
         times
     }
 }
+#[derive(Debug, Clone)]
+pub enum Days {
+    MonthDays(MonthDays),
+    WeekDays(WeekDays),
+    MonthAndWeekDays(MonthDays, WeekDays)
+}
+
+impl Days {
+    pub(crate) fn month_days(&self, week_day: WeekDay) -> MonthDays {
+        match self {
+            Days::MonthDays(month_days) => { month_days.clone()}
+            Days::WeekDays(week_days) => {week_days.to_month_days(week_day)}
+            Days::MonthAndWeekDays(month_days, week_days) => {
+                month_days.merge(&week_days.to_month_days(week_day))
+            }
+        }
+    }
+    pub(crate) fn update_month_days(self, month_days: MonthDays) -> Self {
+        match self {
+            Days::MonthDays(_) => {Self::MonthDays(month_days)}
+            Days::WeekDays(week_days) => {Self::MonthAndWeekDays(month_days, week_days)}
+            Days::MonthAndWeekDays(_, week_days) => {Self::MonthAndWeekDays(month_days, week_days)}
+        }
+    }
+    pub(crate) fn update_week_days(self, week_days: WeekDays) -> Self {
+        match self {
+            Days::MonthDays(month_days) => {Self::MonthAndWeekDays(month_days, week_days)}
+            Days::WeekDays(_) => {Self::WeekDays(week_days)}
+            Days::MonthAndWeekDays(month_days, _) => {Self::MonthAndWeekDays(month_days, week_days)}
+        }
+    }
+}
+
+
 /// 每月的天数配置。如配置（选中）1号、3号……29号
 #[derive(Clone)]
 pub struct MonthDays(u64);

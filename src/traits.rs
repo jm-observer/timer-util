@@ -17,14 +17,14 @@ pub trait Computer {
 }
 /// 配置项的操作trait
 pub trait ConfigOperator: Sized {
-    /// 最小值：比如星期配置，则最小为星期1，即为1
+    /// 最小值：比如星期配置，则最小为星期1，即为1，即0b10，即u64的第1位为1
     const MIN: u64;
-    /// 最大值：比如星期配置，则最大为星期日，即为7
+    /// 最大值：比如星期配置，则最大为星期日，即为7，即0b10000000，即u64的第7位为1
     const MAX: u64;
     /// 满值：即全选的值，比如星期7天全选，则为二进制1111 1110
     const DEFAULT_MAX: u64;
 
-    type DataTy: AsData<u64> + Copy + Clone;
+    type DataTy: AsBizData<u64> + Copy + Clone;
 
     fn _default() -> Self;
     #[inline]
@@ -94,12 +94,13 @@ pub trait ConfigOperator: Sized {
         self._val_mut(val);
         Ok(self)
     }
-
+    /// 生成2者的并集
     fn merge(&self, other: &Self) -> Self {
         let mut new = Self::_default();
         new._val_mut(self._val() | other._val());
         new
     }
+    /// 生成2者的交集
     fn intersection(&self, other: &Self) -> Self {
         let mut new = Self::_default();
         new._val_mut(self._val() & other._val());
@@ -153,7 +154,7 @@ pub trait ConfigOperator: Sized {
     fn _val_mut(&mut self, val: u64);
 }
 
-pub trait AsData<Ty>: Copy {
+pub trait AsBizData<Ty>: Copy {
     fn as_data(self) -> Ty;
 }
 

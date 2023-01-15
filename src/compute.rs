@@ -1,6 +1,6 @@
-use crate::conf::{Hours, Minuters, MonthDays, Seconds, WeekDays};
+use crate::conf::{Days, Hours, Minuters, MonthDays, Seconds, WeekDays};
 use crate::data::{Hour, Minuter, MonthDay, Second, WeekDay};
-use crate::traits::{AsData, Computer, FromData, ConfigOperator};
+use crate::traits::{AsBizData, Computer, FromData, ConfigOperator};
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use log::debug;
 use std::cmp::Ordering;
@@ -22,8 +22,9 @@ pub struct DayUnit {
     year: i32,
     // 最后的值
     month: u32,
-    monthdays: Option<MonthDays>,
-    weekdays: Option<WeekDays>,
+    days: Days,
+    // monthdays: Option<MonthDays>,
+    // weekdays: Option<WeekDays>,
     day: MonthDay,
     max: u32,
     conf: MonthDays,
@@ -45,7 +46,7 @@ impl Computer for DayUnit {
             let date = NaiveDate::from_ymd(self.year, self.month, 1);
             let next_month = next_month(self.year, self.month);
             let weekday: WeekDay = date.weekday().into();
-            self.conf = merge_days_conf(self.monthdays.clone(), self.weekdays.clone(), weekday);
+            self.conf = self.days.month_days(weekday);
             self.max = next_month.pred().day();
             self.day = self.conf.min_val();
             if self.day.as_data() as u32 <= self.max {
@@ -167,18 +168,16 @@ impl DayUnit {
     pub fn new(
         year: i32,
         month: u32,
-        monthdays: Option<MonthDays>,
-        weekdays: Option<WeekDays>,
+        days: Days,
         day: MonthDay,
         first_week_day: WeekDay,
         max: u32,
     ) -> Self {
-        let conf = merge_days_conf(monthdays.clone(), weekdays.clone(), first_week_day);
+        let conf = days.month_days(first_week_day);
         Self {
             year,
             month,
-            monthdays,
-            weekdays,
+            days,
             day: day.clone(),
             max,
             conf,
@@ -197,8 +196,7 @@ pub struct Composition {
 impl Composition {
     pub fn from(
         now: NaiveDateTime,
-        month_days: Option<MonthDays>,
-        week_days: Option<WeekDays>,
+        days: Days,
         hours: Hours,
         min: Minuters,
         seconds: Seconds,
@@ -208,7 +206,7 @@ impl Composition {
         let day = MonthDay::from_data(now.day() as u64);
         let first_week_day: WeekDay = NaiveDate::from_ymd(year, month, 1).weekday().into();
         let max = next_month(year, month).pred().day();
-        let day_unit = DayUnit::new(year, month, month_days, week_days, day, first_week_day, max);
+        let day_unit = DayUnit::new(year, month, days, day, first_week_day, max);
         let hour: TimeUnit<Hours> = TimeUnit::new(Hour::from_data(now.hour() as u64), hours);
         let minuter = TimeUnit::new(Minuter::from_data(now.minute() as u64), min);
         let second = TimeUnit::new(Second::from_data(now.second() as u64), seconds);

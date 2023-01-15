@@ -1,4 +1,4 @@
-use crate::traits::{AsData, FromData};
+use crate::traits::{AsBizData, FromData};
 use crate::TryFromData;
 use anyhow::{bail, Result};
 use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday as CWeekday};
@@ -221,6 +221,21 @@ pub enum Second {
     S59,
 }
 
+impl Second {
+    const STORE_MAX: u64 = 1 << 59;
+    const STORE_MIN: u64 = 1;
+    pub(crate) fn store_val(&self) -> u64 {
+        1 << (*self as u64)
+    }
+    pub(crate) fn next_store_val(&self) -> Option<u64> {
+        if *self == Self::S59 {
+            None
+        } else {
+            Some(self.store_val() << 1)
+        }
+    }
+}
+
 //
 // #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 // pub(crate) struct InnerWeekDay(pub(crate) u8);
@@ -274,33 +289,33 @@ impl From<DateTime> for NaiveDateTime {
     }
 }
 
-impl AsData<u64> for WeekDay {
+impl AsBizData<u64> for WeekDay {
     fn as_data(self) -> u64 {
         self as u64
     }
 }
-impl AsData<u64> for MonthDay {
+impl AsBizData<u64> for MonthDay {
     fn as_data(self) -> u64 {
         self as u64
     }
 }
-impl AsData<u64> for Hour {
+impl AsBizData<u64> for Hour {
     fn as_data(self) -> u64 {
         self as u64
     }
 }
-impl AsData<u64> for Minuter {
+impl AsBizData<u64> for Minuter {
     fn as_data(self) -> u64 {
         self as u64
     }
 }
-impl AsData<u64> for Second {
+impl AsBizData<u64> for Second {
     fn as_data(self) -> u64 {
         self as u64
     }
 }
 
-impl<T, A: AsData<T>> AsData<T> for &A {
+impl<T, A: AsBizData<T>> AsBizData<T> for &A {
     fn as_data(self) -> T {
         (*self).as_data()
     }
