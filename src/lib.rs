@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use crate::builder::DayConfBuilder;
 pub use conf::{Hours, Minuters, MonthDays, Seconds, TimerConf, WeekDays};
 pub use data::{
