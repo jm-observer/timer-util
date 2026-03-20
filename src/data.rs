@@ -3,17 +3,18 @@ use crate::TryFromData;
 use anyhow::{bail, Result};
 use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday as CWeekday};
 
-// use time::{OffsetDateTime, Weekday};
+/// Internal date-time representation combining date and individual time components.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DateTime {
     pub(crate) date: NaiveDate,
     pub(crate) month_day: MonthDay,
     pub(crate) week_day: WeekDay,
     pub(crate) hour: Hour,
-    pub(crate) minuter: Minuter,
+    pub(crate) minute: Minute,
     pub(crate) second: Second,
 }
 
+/// Represents a day of the week (1 = Monday, 7 = Sunday).
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u64)]
 pub enum WeekDay {
@@ -26,6 +27,7 @@ pub enum WeekDay {
     W7,
 }
 
+/// Represents a day of the month (1-31).
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u64)]
 pub enum MonthDay {
@@ -62,6 +64,7 @@ pub enum MonthDay {
     D31,
 }
 
+/// Represents an hour of the day (0-23).
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u64)]
 pub enum Hour {
@@ -91,9 +94,10 @@ pub enum Hour {
     H23,
 }
 
+/// Represents a minute within an hour (0-59).
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u64)]
-pub enum Minuter {
+pub enum Minute {
     M0 = 0,
     M1,
     M2,
@@ -156,6 +160,7 @@ pub enum Minuter {
     M59,
 }
 
+/// Represents a second within a minute (0-59).
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u64)]
 pub enum Second {
@@ -237,14 +242,14 @@ impl From<NaiveDateTime> for DateTime {
         let month_day = MonthDay::from_data(date.day() as u64);
         let week_day: WeekDay = date.weekday().into();
         let hour = Hour::from_data(time.hour() as u64);
-        let minuter = Minuter::from_data(time.minute() as u64);
+        let minute = Minute::from_data(time.minute() as u64);
         let second = Second::from_data(time.second() as u64);
         Self {
             date,
             month_day,
             week_day,
             hour,
-            minuter,
+            minute,
             second,
         }
     }
@@ -255,7 +260,7 @@ impl From<DateTime> for NaiveDateTime {
             tmp.date,
             NaiveTime::from_hms(
                 tmp.hour.as_data() as u32,
-                tmp.minuter.as_data() as u32,
+                tmp.minute.as_data() as u32,
                 tmp.second.as_data() as u32,
             ),
         )
@@ -277,7 +282,7 @@ impl AsBizData<u64> for Hour {
         self as u64
     }
 }
-impl AsBizData<u64> for Minuter {
+impl AsBizData<u64> for Minute {
     fn as_data(self) -> u64 {
         self as u64
     }
@@ -396,7 +401,7 @@ impl FromData<u64> for Hour {
     }
 }
 
-impl FromData<u64> for Minuter {
+impl FromData<u64> for Minute {
     fn from_data(val: u64) -> Self {
         assert!(val < 60);
         match val {
@@ -545,7 +550,7 @@ impl TryFromData<u64> for MonthDay {
 impl TryFromData<u64> for WeekDay {
     fn try_from_data(val: u64) -> Result<Self> {
         if val >= 8 || val == 0 {
-            bail!("week day should not be 0 or >= 60");
+            bail!("week day should not be 0 or >= 8");
         }
         Ok(WeekDay::from_data(val))
     }
@@ -553,17 +558,17 @@ impl TryFromData<u64> for WeekDay {
 impl TryFromData<u64> for Hour {
     fn try_from_data(val: u64) -> Result<Self> {
         if val >= 24 {
-            bail!("week day should not >= 24");
+            bail!("hour should not >= 24");
         }
         Ok(Hour::from_data(val))
     }
 }
-impl TryFromData<u64> for Minuter {
+impl TryFromData<u64> for Minute {
     fn try_from_data(val: u64) -> Result<Self> {
         if val >= 60 {
-            bail!("minuter should not >= 60");
+            bail!("minute should not >= 60");
         }
-        Ok(Minuter::from_data(val))
+        Ok(Minute::from_data(val))
     }
 }
 impl TryFromData<u64> for Second {
@@ -572,5 +577,125 @@ impl TryFromData<u64> for Second {
             bail!("second should not >= 60");
         }
         Ok(Second::from_data(val))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::data::Hour::*;
+    use crate::data::Minute::*;
+    use crate::data::Second::*;
+    use crate::data::WeekDay::*;
+
+    #[test]
+    fn test_hour_from_data() {
+        assert_eq!(Hour::from_data(0), H0);
+        assert_eq!(Hour::from_data(23), H23);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_hour_from_data_out_of_range() {
+        Hour::from_data(24);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_month_day_from_data_zero() {
+        MonthDay::from_data(0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_week_day_from_data_zero() {
+        WeekDay::from_data(0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_week_day_from_data_overflow() {
+        WeekDay::from_data(8);
+    }
+
+    #[test]
+    fn test_try_from_data_valid() {
+        assert!(MonthDay::try_from_data(1).is_ok());
+        assert!(MonthDay::try_from_data(31).is_ok());
+    }
+
+    #[test]
+    fn test_try_from_data_invalid() {
+        assert!(MonthDay::try_from_data(0).is_err());
+        assert!(MonthDay::try_from_data(32).is_err());
+        assert!(WeekDay::try_from_data(0).is_err());
+        assert!(WeekDay::try_from_data(8).is_err());
+        assert!(Hour::try_from_data(24).is_err());
+        assert!(Minute::try_from_data(60).is_err());
+        assert!(Second::try_from_data(60).is_err());
+    }
+
+    #[test]
+    fn test_as_biz_data_roundtrip() {
+        for i in 0..24 {
+            assert_eq!(Hour::from_data(i).as_data(), i);
+        }
+        for i in 1..=31 {
+            assert_eq!(MonthDay::from_data(i).as_data(), i);
+        }
+        for i in 1..=7 {
+            assert_eq!(WeekDay::from_data(i).as_data(), i);
+        }
+        for i in 0..60 {
+            assert_eq!(Minute::from_data(i).as_data(), i);
+            assert_eq!(Second::from_data(i).as_data(), i);
+        }
+    }
+
+    #[test]
+    fn test_datetime_conversion_roundtrip() {
+        let ndt = NaiveDateTime::new(
+            NaiveDate::from_ymd_opt(2024, 2, 29).unwrap(),
+            NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
+        );
+        let dt: DateTime = ndt.into();
+        let back: NaiveDateTime = dt.into();
+        assert_eq!(ndt, back);
+    }
+
+    #[test]
+    fn test_weekday_from_chrono() {
+        use chrono::Weekday;
+        assert_eq!(WeekDay::from(Weekday::Mon), W1);
+        assert_eq!(WeekDay::from(Weekday::Tue), W2);
+        assert_eq!(WeekDay::from(Weekday::Wed), W3);
+        assert_eq!(WeekDay::from(Weekday::Thu), W4);
+        assert_eq!(WeekDay::from(Weekday::Fri), W5);
+        assert_eq!(WeekDay::from(Weekday::Sat), W6);
+        assert_eq!(WeekDay::from(Weekday::Sun), W7);
+    }
+
+    #[test]
+    fn test_minute_from_data_boundaries() {
+        assert_eq!(Minute::from_data(0), M0);
+        assert_eq!(Minute::from_data(59), M59);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_minute_from_data_out_of_range() {
+        Minute::from_data(60);
+    }
+
+    #[test]
+    fn test_second_from_data_boundaries() {
+        assert_eq!(Second::from_data(0), S0);
+        assert_eq!(Second::from_data(59), S59);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_second_from_data_out_of_range() {
+        Second::from_data(60);
     }
 }

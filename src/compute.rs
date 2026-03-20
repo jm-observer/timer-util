@@ -1,29 +1,20 @@
-use crate::conf::{Days, Hours, Minuters, MonthDays, Seconds};
-use crate::data::{Hour, Minuter, MonthDay, Second, WeekDay};
-use crate::traits::{AsBizData, Computer, FromData, ConfigOperator};
+use crate::conf::{Days, Hours, Minutes, MonthDays, Seconds};
+use crate::data::{Hour, Minute, MonthDay, Second, WeekDay};
+use crate::traits::{AsBizData, Computer, ConfigOperator, FromData};
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use log::debug;
 
 #[derive(Debug)]
 pub struct TimeUnit<T: ConfigOperator> {
-    // 最大值
-    // max: T::ValTy,
-    // 当前的起始值
     index: T::DataTy,
-    // 对应的配置
     conf: T,
-    // 最后的值
     val: u64,
 }
 #[derive(Debug)]
 pub struct DayUnit {
-    // 当前的起始值
     year: i32,
-    // 最后的值
     month: u32,
     days: Days,
-    // monthdays: Option<MonthDays>,
-    // weekdays: Option<WeekDays>,
     day: MonthDay,
     max: u32,
     conf: MonthDays,
@@ -60,15 +51,9 @@ impl Computer for DayUnit {
     }
 
     fn next_val(&self) -> Option<Self::DataTy> {
-        if let Some(next) = self.conf.next(self.day) {
-            if next.as_data() > self.max as u64 {
-                None
-            } else {
-                Some(next)
-            }
-        } else {
-            None
-        }
+        self.conf
+            .next(self.day)
+            .filter(|next| next.as_data() <= self.max as u64)
     }
 
     fn min_val(&self) -> Self::DataTy {
@@ -115,7 +100,6 @@ impl<T: ConfigOperator> TimeUnit<T> {
     pub fn new(index: T::DataTy, conf: T) -> Self {
         let val = index;
         Self {
-            // max: T::MAX,
             index,
             conf,
             val: val.as_data(),
@@ -145,7 +129,7 @@ impl DayUnit {
             year,
             month,
             days,
-            day: day.clone(),
+            day,
             max,
             conf,
             val: day.as_data() as u32,
@@ -156,7 +140,7 @@ impl DayUnit {
 pub struct Composition {
     day: DayUnit,
     hour: TimeUnit<Hours>,
-    minuter: TimeUnit<Minuters>,
+    minute: TimeUnit<Minutes>,
     second: TimeUnit<Seconds>,
 }
 
@@ -165,7 +149,7 @@ impl Composition {
         now: NaiveDateTime,
         days: Days,
         hours: Hours,
-        min: Minuters,
+        min: Minutes,
         seconds: Seconds,
     ) -> Self {
         let year = now.year();
@@ -175,30 +159,28 @@ impl Composition {
         let max = next_month(year, month).pred().day();
         let day_unit = DayUnit::new(year, month, days, day, first_week_day, max);
         let hour: TimeUnit<Hours> = TimeUnit::new(Hour::from_data(now.hour() as u64), hours);
-        let minuter = TimeUnit::new(Minuter::from_data(now.minute() as u64), min);
+        let minute = TimeUnit::new(Minute::from_data(now.minute() as u64), min);
         let second = TimeUnit::new(Second::from_data(now.second() as u64), seconds);
-        Composition::new(day_unit, hour, minuter, second)
+        Composition::new(day_unit, hour, minute, second)
     }
     pub fn new(
         day: DayUnit,
         hour: TimeUnit<Hours>,
-        minuter: TimeUnit<Minuters>,
+        minute: TimeUnit<Minutes>,
         second: TimeUnit<Seconds>,
     ) -> Self {
         Self {
             day,
             hour,
-            minuter,
+            minute,
             second,
         }
     }
 
     pub fn next(&mut self) -> NaiveDateTime {
         loop {
-            if self.day.is_match() {
-                if self.match_hour() {
-                    break;
-                }
+            if self.day.is_match() && self.match_hour() {
+                break;
             }
             self.next_day();
         }
@@ -209,33 +191,29 @@ impl Composition {
             NaiveDate::from_ymd(self.day.year, self.day.month, self.day.val),
             NaiveTime::from_hms(
                 self.hour.val as u32,
-                self.minuter.val as u32,
+                self.minute.val as u32,
                 self.second.val as u32,
             ),
         )
     }
     fn match_hour(&mut self) -> bool {
-        if self.hour.is_match() {
-            if self.match_minuter() {
-                return true;
-            }
+        if self.hour.is_match() && self.match_minute() {
+            return true;
         }
         if let Some(hour) = self.hour.next_val() {
             self.hour.val_mut(hour);
-            self.minuter_update_to_next_ring();
+            self.minute_update_to_next_ring();
             true
         } else {
             false
         }
     }
-    fn match_minuter(&mut self) -> bool {
-        if self.minuter.is_match() {
-            if self.match_second() {
-                return true;
-            }
+    fn match_minute(&mut self) -> bool {
+        if self.minute.is_match() && self.match_second() {
+            return true;
         }
-        if let Some(minuter) = self.minuter.next_val() {
-            self.minuter.val_mut(minuter);
+        if let Some(minute) = self.minute.next_val() {
+            self.minute.val_mut(minute);
             self.second_update_to_next_ring();
             true
         } else {
@@ -246,8 +224,8 @@ impl Composition {
         if self.second.is_match() {
             return true;
         }
-        if let Some(hour) = self.second.next_val() {
-            self.second.val_mut(hour);
+        if let Some(second) = self.second.next_val() {
+            self.second.val_mut(second);
             true
         } else {
             false
@@ -257,7 +235,7 @@ impl Composition {
     fn next_day(&mut self) {
         if let Some(day) = self.day.next_val() {
             debug!("day_unit: {:?}, next_day: {:?}", self.day, day);
-            self.day.val_mut(day.clone());
+            self.day.val_mut(day);
             self.day.day = day;
         } else {
             self.day.update_to_next_ring();
@@ -267,10 +245,10 @@ impl Composition {
     }
     fn hour_update_to_next_ring(&mut self) {
         self.hour.update_to_next_ring();
-        self.minuter_update_to_next_ring();
+        self.minute_update_to_next_ring();
     }
-    fn minuter_update_to_next_ring(&mut self) {
-        self.minuter.update_to_next_ring();
+    fn minute_update_to_next_ring(&mut self) {
+        self.minute.update_to_next_ring();
         self.second_update_to_next_ring();
     }
     fn second_update_to_next_ring(&mut self) {
@@ -292,106 +270,7 @@ mod test {
     use super::*;
     use crate::traits::Computer;
     use crate::*;
-
-    // #[test]
-    // fn test_init_first_week() {
-    //     assert_eq!(
-    //         WeekArray::init(W3),
-    //         WeekArray {
-    //             days: [-1, 0, 1, 2, 3, 4, 5],
-    //         }
-    //     );
-    //     assert_eq!(
-    //         WeekArray::init(W1),
-    //         WeekArray {
-    //             days: [1, 2, 3, 4, 5, 6, 7],
-    //         }
-    //     );
-    //     assert_eq!(
-    //         WeekArray::init(W7),
-    //         WeekArray {
-    //             days: [-5, -4, -3, -2, -1, 0, 1],
-    //         }
-    //     );
-    //     {
-    //         let next = WeekArray::init(W7).next();
-    //         assert!(next.is_some());
-    //         let next = next.unwrap();
-    //         assert_eq!(next.days, [2, 3, 4, 5, 6, 7, 8]);
-    //
-    //         let next = next.next();
-    //         assert!(next.is_some());
-    //         let next = next.unwrap();
-    //         assert_eq!(next.days, [9, 10, 11, 12, 13, 14, 15]);
-    //
-    //         let next = next.next();
-    //         assert!(next.is_some());
-    //         let next = next.unwrap();
-    //         assert_eq!(next.days, [16, 17, 18, 19, 20, 21, 22]);
-    //
-    //         let next = next.next();
-    //         assert!(next.is_some());
-    //         let next = next.unwrap();
-    //         assert_eq!(next.days, [23, 24, 25, 26, 27, 28, 29]);
-    //
-    //         let next = next.next();
-    //         assert!(next.is_some());
-    //         let next = next.unwrap();
-    //         assert_eq!(next.days, [30, 31, 32, 33, 34, 35, 36]);
-    //
-    //         let next = next.next();
-    //         assert!(next.is_none());
-    //     }
-    //     {
-    //         let next = WeekArray::init(W3).next();
-    //         assert!(next.is_some());
-    //         let next = next.unwrap();
-    //         assert_eq!(next.days, [6, 7, 8, 9, 10, 11, 12]);
-    //
-    //         let next = next.next();
-    //         assert!(next.is_some());
-    //         let next = next.unwrap();
-    //         assert_eq!(next.days, [13, 14, 15, 16, 17, 18, 19]);
-    //
-    //         let next = next.next();
-    //         assert!(next.is_some());
-    //         let next = next.unwrap();
-    //         assert_eq!(next.days, [20, 21, 22, 23, 24, 25, 26]);
-    //
-    //         let next = next.next();
-    //         assert!(next.is_some());
-    //         let next = next.unwrap();
-    //         assert_eq!(next.days, [27, 28, 29, 30, 31, 32, 33]);
-    //
-    //         let next = next.next();
-    //         assert!(next.is_none());
-    //     }
-    //
-    //     {
-    //         let next = WeekArray::init(W1).next();
-    //         assert!(next.is_some());
-    //         let next = next.unwrap();
-    //         assert_eq!(next.days, [8, 9, 10, 11, 12, 13, 14]);
-    //
-    //         let next = next.next();
-    //         assert!(next.is_some());
-    //         let next = next.unwrap();
-    //         assert_eq!(next.days, [15, 16, 17, 18, 19, 20, 21]);
-    //
-    //         let next = next.next();
-    //         assert!(next.is_some());
-    //         let next = next.unwrap();
-    //         assert_eq!(next.days, [22, 23, 24, 25, 26, 27, 28]);
-    //
-    //         let next = next.next();
-    //         assert!(next.is_some());
-    //         let next = next.unwrap();
-    //         assert_eq!(next.days, [29, 30, 31, 32, 33, 34, 35]);
-    //
-    //         let next = next.next();
-    //         assert!(next.is_none());
-    //     }
-    // }
+    use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
     #[test]
     fn test_time_unit_second() {
@@ -430,4 +309,84 @@ mod test {
         }
     }
 
+    #[test]
+    fn test_time_unit_hour() {
+        let conf = Hours::default_array(&[H0, H8, H16]);
+        {
+            let unit = TimeUnit::new(H0, conf.clone());
+            assert!(unit.is_match());
+            assert_eq!(unit.next_val(), Some(H8));
+        }
+        {
+            let unit = TimeUnit::new(H10, conf.clone());
+            assert!(!unit.is_match());
+            assert_eq!(unit.next_val(), Some(H16));
+        }
+        {
+            let unit = TimeUnit::new(H20, conf.clone());
+            assert!(!unit.is_match());
+            assert_eq!(unit.next_val(), None);
+        }
+    }
+
+    #[test]
+    fn test_time_unit_minute() {
+        let conf = Minutes::default_array(&[M0, M15, M30, M45]);
+        {
+            let unit = TimeUnit::new(M0, conf.clone());
+            assert!(unit.is_match());
+            assert_eq!(unit.next_val(), Some(M15));
+        }
+        {
+            let unit = TimeUnit::new(M10, conf.clone());
+            assert!(!unit.is_match());
+            assert_eq!(unit.next_val(), Some(M15));
+        }
+        {
+            let unit = TimeUnit::new(M50, conf.clone());
+            assert!(!unit.is_match());
+            assert_eq!(unit.next_val(), None);
+        }
+    }
+
+    #[test]
+    fn test_leap_year_feb29() {
+        let conf = configure_monthday(MonthDays::default_value(D29))
+            .build_with_hours(Hours::default_value(H0))
+            .build_with_minute(Minutes::default_value(M0))
+            .build_with_second(Seconds::default_value(S0));
+        let start = NaiveDateTime::new(
+            NaiveDate::from_ymd_opt(2024, 2, 28).unwrap(),
+            NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
+        );
+        let next = conf.next_with_time(start);
+        assert_eq!(
+            next,
+            NaiveDateTime::new(
+                NaiveDate::from_ymd_opt(2024, 2, 29).unwrap(),
+                NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+            )
+        );
+    }
+
+    #[test]
+    fn test_non_leap_year_skip_feb29() {
+        let conf = configure_monthday(MonthDays::default_value(D29))
+            .build_with_hours(Hours::default_value(H0))
+            .build_with_minute(Minutes::default_value(M0))
+            .build_with_second(Seconds::default_value(S0));
+        let start = NaiveDateTime::new(
+            NaiveDate::from_ymd_opt(2023, 1, 30).unwrap(),
+            NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+        );
+        let next = conf.next_with_time(start);
+        // 2023 is not a leap year, Feb has no 29th, should skip to March 29
+        assert_eq!(
+            next,
+            NaiveDateTime::new(
+                NaiveDate::from_ymd_opt(2023, 3, 29).unwrap(),
+                NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+            )
+        );
+    }
 }

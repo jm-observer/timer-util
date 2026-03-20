@@ -1,64 +1,95 @@
 use anyhow::{bail, Result};
 use std::ops::{Bound, RangeBounds};
 
+/// Trait for time-unit computation within the scheduling engine.
+///
+/// Implemented by [`DayUnit`](crate::compute::DayUnit) and
+/// [`TimeUnit<T>`](crate::compute::TimeUnit) to find the next matching value
+/// in a scheduling cycle.
 pub trait Computer {
     const MIN: u64;
     type DataTy;
 
-    /// 下个循环的第一个符合值
+    /// Reset to the first matching value for the next cycle.
     fn update_to_next_ring(&mut self);
 
+    /// Check if the current value matches the configuration.
     fn is_match(&self) -> bool;
-    // 因为结果可能用来赋值，因此用DataTy，可以避免Result。不包含index
+
+    /// Return the next matching value after the current one, or `None` if none exists in this cycle.
     fn next_val(&self) -> Option<Self::DataTy>;
+
+    /// Return the minimum configured value.
     fn min_val(&self) -> Self::DataTy;
+
+    /// Set the current value.
     fn val_mut(&mut self, val: Self::DataTy);
+
+    /// Return the current value as a raw `u64`.
     fn val(&self) -> u64;
 }
-/// 配置项的操作trait
+
+/// Bitset-based configuration operator for time-unit selection.
+///
+/// Each implementor stores selected values as bits in a `u64`. For example,
+/// `Hours` with bit 9 set means hour 9 is selected.
 pub trait ConfigOperator: Sized {
-    /// 最小值：比如星期配置，则最小为星期1，即为1，即0b10，即u64的第1位为1
+    /// The minimum valid value (e.g., 0 for hours, 1 for month days).
     const MIN: u64;
-    /// 最大值：比如星期配置，则最大为星期日，即为7，即0b10000000，即u64的第7位为1
+    /// The maximum valid value (e.g., 23 for hours, 31 for month days).
     const MAX: u64;
-    /// 满值：即全选的值，比如星期7天全选，则为二进制1111 1110
+    /// The bitset value when all valid positions are selected.
     const DEFAULT_MAX: u64;
 
+    /// The associated data type for this configuration (e.g., `Hour`, `Minute`).
     type DataTy: AsBizData<u64> + Copy + Clone;
 
+    /// Create an empty configuration with no values selected.
     fn _default() -> Self;
+
+    /// Create a configuration with a single value selected.
     #[inline]
     fn default_value(val: Self::DataTy) -> Self {
         let ins = Self::_default();
         ins.add(val)
     }
+
+    /// Create a configuration from a range of values.
     #[inline]
     fn default_range(range: impl RangeBounds<Self::DataTy>) -> Result<Self> {
         let ins = Self::_default();
         ins.add_range(range)
     }
+
+    /// Create a configuration with all valid values selected.
     #[inline]
     fn default_all() -> Self {
         let mut ins = Self::_default();
         ins._val_mut(Self::DEFAULT_MAX);
         ins
     }
+
+    /// Create a configuration with all values from `MIN` up to `max` selected.
     #[inline]
     fn default_all_by_max(max: Self::DataTy) -> Self {
         let mut ins = Self::_default();
         let mut val = ins._val();
         let mut index = Self::MIN;
         while index <= max.as_data() {
-            val |= 1 << index.clone();
+            val |= 1 << index;
             index += 1;
         }
         ins._val_mut(val);
         ins
     }
+
+    /// Create a configuration from an array of values.
     fn default_array(vals: &[Self::DataTy]) -> Self {
         let ins = Self::_default();
         ins.add_array(vals)
     }
+
+    /// Add multiple values to this configuration.
     fn add_array(mut self, vals: &[Self::DataTy]) -> Self {
         let mut val = self._val();
         for i in vals {
@@ -67,11 +98,15 @@ pub trait ConfigOperator: Sized {
         self._val_mut(val);
         self
     }
+
+    /// Add a single value to this configuration.
     fn add(mut self, index: Self::DataTy) -> Self {
         let index = index.as_data();
         self._val_mut(self._val() | (1 << index));
         self
     }
+
+    /// Add a range of values to this configuration.
     fn add_range(mut self, range: impl RangeBounds<Self::DataTy>) -> Result<Self> {
         let mut first = match range.start_bound() {
             Bound::Unbounded => Self::MIN,
@@ -94,19 +129,22 @@ pub trait ConfigOperator: Sized {
         self._val_mut(val);
         Ok(self)
     }
-    /// 生成2者的并集
+
+    /// Return the union of two configurations.
     fn merge(&self, other: &Self) -> Self {
         let mut new = Self::_default();
         new._val_mut(self._val() | other._val());
         new
     }
-    /// 生成2者的交集
+
+    /// Return the intersection of two configurations.
     fn intersection(&self, other: &Self) -> Self {
         let mut new = Self::_default();
         new._val_mut(self._val() & other._val());
         new
     }
 
+    /// Return all selected values as a sorted vector.
     fn to_vec(&self) -> Vec<u64> {
         let mut res = Vec::new();
         let val = self._val();
@@ -119,13 +157,18 @@ pub trait ConfigOperator: Sized {
         }
         res
     }
+
+    /// Check if a specific value is selected.
     fn contain(&self, index: Self::DataTy) -> bool {
         let index = index.as_data();
         let val = self._val();
         val & (1 << index) > 0
     }
+
+    /// Return the next selected value after `index`, or `None` if none exists.
     fn next(&self, index: Self::DataTy) -> Option<Self::DataTy>;
-    /// 取下一个持有值，不包括index
+
+    /// Internal: find the next set bit after `index`.
     fn _next(&self, index: Self::DataTy) -> Option<u64> {
         let mut first = index.as_data() + 1;
         let val = self._val();
@@ -137,8 +180,11 @@ pub trait ConfigOperator: Sized {
         }
         None
     }
+
+    /// Return the minimum selected value.
     fn min_val(&self) -> Self::DataTy;
-    /// 取最小的持有值
+
+    /// Internal: find the minimum set bit.
     fn _min_val(&self) -> u64 {
         let mut first = Self::MIN;
         let val = self._val();
@@ -150,23 +196,32 @@ pub trait ConfigOperator: Sized {
         }
         unreachable!("it is a bug");
     }
+
+    /// Return the raw bitset value.
     fn _val(&self) -> u64;
+
+    /// Set the raw bitset value.
     fn _val_mut(&mut self, val: u64);
 
-    /// 是否啥都没有选
+    /// Check if no values are selected.
     fn is_zero(&self) -> bool {
         self._val() == 0
     }
 }
 
+/// Trait for converting a value type to its raw `u64` representation.
 pub trait AsBizData<Ty>: Copy {
     fn as_data(self) -> Ty;
 }
 
+/// Trait for converting a raw `u64` value to a typed enum variant.
+///
+/// Panics if the value is out of valid range. Use [`TryFromData`] for fallible conversion.
 pub trait FromData<Ty> {
     fn from_data(val: Ty) -> Self;
 }
 
+/// Fallible conversion from a raw value, returning an error for out-of-range values.
 pub trait TryFromData<Ty>: FromData<Ty> {
     fn try_from_data(val: Ty) -> anyhow::Result<Self>
     where
