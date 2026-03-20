@@ -6,12 +6,16 @@ pub use data::{
     Hour, Hour::*, Minute, Minute::*, MonthDay, MonthDay::*, Second, Second::*, WeekDay,
     WeekDay::*,
 };
+pub use error::{TimerError, Result};
+pub use iter::TimerIter;
 pub use traits::*;
 
 mod builder;
 mod compute;
 mod conf;
 mod data;
+pub mod error;
+mod iter;
 mod traits;
 
 /// Create a timer configuration starting with weekday selection.

@@ -1,7 +1,7 @@
 use crate::compute::Composition;
 use crate::data::{Hour, Minute, MonthDay, Second, WeekDay};
+use crate::error::TimerError;
 use crate::traits::{ConfigOperator, FromData};
-use anyhow::{bail, Result};
 use chrono::{Datelike, Duration, Local, NaiveDateTime, Timelike};
 use log::debug;
 use std::fmt::{Debug, Formatter};
@@ -33,6 +33,7 @@ use std::ops::{Add, Bound, RangeBounds, Sub};
 /// );
 /// ```
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TimerConf {
     pub(crate) days: Days,
     pub(crate) hours: Hours,
@@ -48,31 +49,33 @@ impl TimerConf {
     pub fn datetimes(
         &self,
         range: impl RangeBounds<NaiveDateTime>,
-    ) -> Result<Vec<NaiveDateTime>> {
-        let mut start = match range.start_bound() {
-            Bound::Unbounded => bail!("unbounded start is not supported"),
+    ) -> crate::error::Result<Vec<NaiveDateTime>> {
+        let start = match range.start_bound() {
+            Bound::Unbounded => return Err(TimerError::UnboundedRange),
             Bound::Included(first) => first.sub(Duration::seconds(1)),
             Bound::Excluded(first) => *first,
         };
         let end = match range.end_bound() {
-            Bound::Unbounded => bail!("unbounded end is not supported"),
+            Bound::Unbounded => return Err(TimerError::UnboundedRange),
             Bound::Included(end) => *end,
             Bound::Excluded(end) => end.sub(Duration::seconds(1)),
         };
         if start >= end {
-            bail!("start must be before end")
+            return Err(TimerError::InvalidRange { start: 0, end: 0 });
         }
-        let mut date_times = Vec::new();
-        while start <= end {
-            let next = self.next_with_time(start);
-            if next <= end {
-                date_times.push(next);
-                start = next;
-            } else {
-                break;
-            }
-        }
-        Ok(date_times)
+        Ok(self.iter_range(start, end).collect())
+    }
+
+    /// Returns an iterator over all scheduled times starting after `start`.
+    ///
+    /// The iterator is infinite — use `.take(n)` or `.take_while()` to limit.
+    pub fn iter_from(&self, start: NaiveDateTime) -> crate::iter::TimerIter<'_> {
+        crate::iter::TimerIter::new(self, start, None)
+    }
+
+    /// Returns an iterator over scheduled times within `[start, end]`.
+    pub fn iter_range(&self, start: NaiveDateTime, end: NaiveDateTime) -> crate::iter::TimerIter<'_> {
+        crate::iter::TimerIter::new(self, start, Some(end))
     }
 
     /// Return the next scheduled time point after `now` (exclusive).
@@ -119,6 +122,7 @@ impl TimerConf {
 /// Day selection mode: by month days, week days, or both (union).
 #[derive(Debug, Clone)]
 #[allow(clippy::enum_variant_names)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Days {
     MonthDays(MonthDays),
     WeekDays(WeekDays),
@@ -155,30 +159,35 @@ impl Days {
 ///
 /// Uses a bitset internally where bit N being set means day N is selected.
 #[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MonthDays(u64);
 
 /// Configuration for which days of the week are selected (1=Mon, 7=Sun).
 ///
 /// Uses a bitset internally where bit N being set means weekday N is selected.
 #[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct WeekDays(u64);
 
 /// Configuration for which hours of the day are selected (0-23).
 ///
 /// Uses a bitset internally where bit N being set means hour N is selected.
 #[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Hours(u64);
 
 /// Configuration for which minutes of the hour are selected (0-59).
 ///
 /// Uses a bitset internally where bit N being set means minute N is selected.
 #[derive(Clone, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Minutes(u64);
 
 /// Configuration for which seconds of the minute are selected (0-59).
 ///
 /// Uses a bitset internally where bit N being set means second N is selected.
 #[derive(Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Seconds(u64);
 
 impl ConfigOperator for Hours {
@@ -387,7 +396,6 @@ mod test {
     #[allow(unused_imports)]
     use crate::data::{DateTime, Hour::*, Minute::*, MonthDay::*, Second::*, WeekDay::*};
     use crate::*;
-    use anyhow::Result;
     use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime};
     use log::debug;
     use std::ops::Sub;
@@ -407,7 +415,7 @@ mod test {
     }
 
     #[test]
-    fn test_auto() -> anyhow::Result<()> {
+    fn test_auto() -> crate::error::Result<()> {
         let conf = configure_weekday(WeekDays::default_array(&[W1, W3, W5]))
             .conf_month_days(
                 MonthDays::default_range(D5..D10)?
@@ -457,7 +465,7 @@ mod test {
         Ok(())
     }
     #[test]
-    fn test_auto_pre() -> anyhow::Result<()> {
+    fn test_auto_pre() -> crate::error::Result<()> {
         let conf = configure_weekday(WeekDays::default_array(&[W1, W3, W5]))
             .conf_month_days(
                 MonthDays::default_range(D5..D10)?
@@ -496,7 +504,7 @@ mod test {
         );
     }
     #[test]
-    fn test_datetimes() -> Result<()> {
+    fn test_datetimes() -> crate::error::Result<()> {
         let some_datetimes = [
             datetime(2020, 5, 15, 10, 30, 30),
             datetime(2020, 5, 15, 10, 30, 45),
@@ -524,7 +532,7 @@ mod test {
     }
 
     #[test]
-    fn test() -> Result<()> {
+    fn test() -> crate::error::Result<()> {
         let conf = configure_weekday(WeekDays::default_array(&[W5, W3]))
             .conf_month_days(MonthDays::default_array(&[D5, D15, D24]))
             .build_with_hours(Hours::default_array(&[H5, H10, H15]))
@@ -596,7 +604,7 @@ mod test {
     }
 
     #[test]
-    fn test_year() -> Result<()> {
+    fn test_year() -> crate::error::Result<()> {
         let conf = configure_monthday(MonthDays::default_value(D31))
             .build_with_hours(Hours::default_array(&[H12]))
             .build_with_minute(Minutes::default_array(&[M30]))
@@ -624,7 +632,7 @@ mod test {
         Ok(())
     }
     #[test]
-    fn test_month() -> Result<()> {
+    fn test_month() -> crate::error::Result<()> {
         let conf = configure_monthday(MonthDays::default_value(D31))
             .build_with_hours(Hours::default_array(&[H12]))
             .build_with_minute(Minutes::default_array(&[M30]))
@@ -724,5 +732,127 @@ mod test {
             hours.to_vec(),
             vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
         );
+    }
+
+    #[test]
+    fn test_iter_from_take() {
+        let conf = configure_monthday(MonthDays::default_value(D1))
+            .build_with_hours(Hours::default_value(H0))
+            .build_with_minute(Minutes::default_value(M0))
+            .build_with_second(Seconds::default_value(S0));
+        let start = datetime(2024, 1, 1, 0, 0, 0);
+        let times: Vec<_> = conf.iter_from(start).take(3).collect();
+        assert_eq!(times, vec![
+            datetime(2024, 2, 1, 0, 0, 0),
+            datetime(2024, 3, 1, 0, 0, 0),
+            datetime(2024, 4, 1, 0, 0, 0),
+        ]);
+    }
+
+    #[test]
+    fn test_iter_range_matches_datetimes() {
+        let conf = configure_weekday(WeekDays::default_array(&[W5, W3]))
+            .conf_month_days(MonthDays::default_array(&[D5, D15, D24]))
+            .build_with_hours(Hours::default_array(&[H5, H10, H15]))
+            .build_with_minute(Minutes::default_array(&[M15, M30, M45]))
+            .build_with_second(Seconds::default_array(&[S15, S30, S45]));
+        let start = datetime(2020, 5, 15, 10, 30, 17);
+        let end = datetime(2020, 5, 15, 15, 30, 30);
+
+        let from_datetimes = conf.datetimes(start..=end).unwrap();
+        let from_iter: Vec<_> = conf.iter_range(start.sub(Duration::seconds(1)), end).collect();
+        assert_eq!(from_datetimes, from_iter);
+    }
+
+    #[test]
+    fn test_iter_is_lazy() {
+        let conf = configure_monthday(MonthDays::default_value(D1))
+            .build_with_hours(Hours::default_value(H0))
+            .build_with_minute(Minutes::default_value(M0))
+            .build_with_second(Seconds::default_value(S0));
+        let start = datetime(2024, 1, 1, 0, 0, 0);
+        let mut iter = conf.iter_from(start);
+        let first = iter.next().unwrap();
+        assert_eq!(first, datetime(2024, 2, 1, 0, 0, 0));
+    }
+
+    #[test]
+    fn test_error_types() {
+        let result = Hours::default_range(H10..H5);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            crate::error::TimerError::InvalidRange { start: 10, end: 4 }
+        );
+
+        let conf = configure_monthday(MonthDays::default_value(D1))
+            .build_with_hours(Hours::default_value(H0))
+            .build_with_minute(Minutes::default_value(M0))
+            .build_with_second(Seconds::default_value(S0));
+        let t = datetime(2024, 1, 1, 0, 0, 0);
+        assert!(matches!(conf.datetimes(t..), Err(crate::error::TimerError::UnboundedRange)));
+        assert!(matches!(conf.datetimes(..t), Err(crate::error::TimerError::UnboundedRange)));
+    }
+
+    #[test]
+    fn test_value_out_of_range() {
+        assert!(matches!(
+            MonthDay::try_from_data(0),
+            Err(crate::error::TimerError::ValueOutOfRange { type_name: "MonthDay", .. })
+        ));
+        assert!(matches!(
+            Hour::try_from_data(24),
+            Err(crate::error::TimerError::ValueOutOfRange { type_name: "Hour", .. })
+        ));
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "serde")]
+mod serde_test {
+    use super::*;
+    use crate::*;
+    use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+
+    fn datetime(
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        min: u32,
+        second: u32,
+    ) -> NaiveDateTime {
+        NaiveDateTime::new(
+            NaiveDate::from_ymd(year, month, day),
+            NaiveTime::from_hms(hour, min, second),
+        )
+    }
+
+    #[test]
+    fn test_hours_serde_roundtrip() {
+        let hours = Hours::default_array(&[H0, H8, H16]);
+        let json = serde_json::to_string(&hours).unwrap();
+        let back: Hours = serde_json::from_str(&json).unwrap();
+        assert_eq!(hours.to_vec(), back.to_vec());
+    }
+
+    #[test]
+    fn test_timer_conf_serde_roundtrip() {
+        let conf = configure_monthday(MonthDays::default_value(D1))
+            .build_with_hours(Hours::default_value(H9))
+            .build_with_minute(Minutes::default_value(M30))
+            .build_with_second(Seconds::default_value(S0));
+        let json = serde_json::to_string(&conf).unwrap();
+        let back: TimerConf = serde_json::from_str(&json).unwrap();
+        let start = datetime(2024, 1, 1, 0, 0, 0);
+        assert_eq!(conf.next_with_time(start), back.next_with_time(start));
+    }
+
+    #[test]
+    fn test_weekday_enum_serde() {
+        let day = WeekDay::W3;
+        let json = serde_json::to_string(&day).unwrap();
+        let back: WeekDay = serde_json::from_str(&json).unwrap();
+        assert_eq!(day, back);
     }
 }

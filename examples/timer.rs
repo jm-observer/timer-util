@@ -2,9 +2,7 @@ use std::time::Duration;
 use timer_util::*;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    custom_utils::logger::logger_stdout_debug();
-
+async fn main() {
     let conf = configure_weekday(WeekDays::default_value(W6))
         .build_with_hours(Hours::default_all())
         .build_with_minute(Minutes::default_array(&[M0, M10, M20, M30, M40, M50]))
@@ -18,5 +16,4 @@ async fn main() -> anyhow::Result<()> {
         }
     });
     handle.await.unwrap();
-    Ok(())
 }

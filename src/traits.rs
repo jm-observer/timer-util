@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use crate::error::TimerError;
 use std::ops::{Bound, RangeBounds};
 
 /// Trait for time-unit computation within the scheduling engine.
@@ -56,7 +56,7 @@ pub trait ConfigOperator: Sized {
 
     /// Create a configuration from a range of values.
     #[inline]
-    fn default_range(range: impl RangeBounds<Self::DataTy>) -> Result<Self> {
+    fn default_range(range: impl RangeBounds<Self::DataTy>) -> crate::error::Result<Self> {
         let ins = Self::_default();
         ins.add_range(range)
     }
@@ -107,7 +107,7 @@ pub trait ConfigOperator: Sized {
     }
 
     /// Add a range of values to this configuration.
-    fn add_range(mut self, range: impl RangeBounds<Self::DataTy>) -> Result<Self> {
+    fn add_range(mut self, range: impl RangeBounds<Self::DataTy>) -> crate::error::Result<Self> {
         let mut first = match range.start_bound() {
             Bound::Unbounded => Self::MIN,
             Bound::Included(first) => first.as_data(),
@@ -119,7 +119,7 @@ pub trait ConfigOperator: Sized {
             Bound::Excluded(end) => end.as_data() - 1,
         };
         if first > end {
-            bail!("error:{} > {}", first, end);
+            return Err(TimerError::InvalidRange { start: first, end });
         }
         let mut val = self._val();
         while first <= end {
@@ -223,7 +223,7 @@ pub trait FromData<Ty> {
 
 /// Fallible conversion from a raw value, returning an error for out-of-range values.
 pub trait TryFromData<Ty>: FromData<Ty> {
-    fn try_from_data(val: Ty) -> anyhow::Result<Self>
+    fn try_from_data(val: Ty) -> crate::error::Result<Self>
     where
         Self: Sized;
 }
