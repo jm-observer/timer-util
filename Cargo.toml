@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "alarm-server"]
+
 [package]
 name = "timer-util"
 version = "0.5.0"
