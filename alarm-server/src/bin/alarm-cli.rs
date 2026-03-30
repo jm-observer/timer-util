@@ -6,6 +6,7 @@ use reqwest::blocking::Client;
 use serde_json::Value;
 use std::process::ExitCode;
 use std::env;
+use log::LevelFilter::Info;
 
 #[derive(Parser)]
 #[command(name = "alarm-cli", version, author, about = "CLI for alarm-server")]
@@ -93,6 +94,9 @@ fn parse_callback_body(raw: Option<String>) -> Result<Option<Value>, String> {
 }
 
 fn main() -> ExitCode {
+    let _ = custom_utils::logger::logger_feature("alarm-cli"
+                                                 , "info,alarm-server=debug,alarm-client=debug,timer-util=debug", Info, false).build();
+
     let cli = Cli::parse();
     let server_url = get_server_url(cli.server);
     let client = Client::new();

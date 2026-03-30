@@ -13,10 +13,12 @@ use crate::scheduler::{Scheduler, SchedulerCommand};
 use std::sync::Arc;
 use reqwest::Client;
 use std::time::Duration;
+use log::LevelFilter::Info;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    env_logger::init();
+    let _ = custom_utils::logger::logger_feature("alarm-server"
+     , "info,alarm-server=debug,alarm-client=debug,timer-util=debug", Info, false).build();
     log::info!("alarm-server starting...");
 
     // Load configuration
