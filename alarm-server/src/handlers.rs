@@ -1,11 +1,12 @@
 use actix_web::{web, HttpResponse};
 use crate::models::{CreateAlarmRequest, AlarmResponse, AlarmListResponse, ListQuery};
+use crate::dashboard::{dashboard_page, dashboard_stats, list_notifications};
 use crate::db::Database;
 use crate::error::AppError;
 use crate::scheduler::SchedulerCommand;
 use uuid::Uuid;
 use chrono::{Local, NaiveDateTime};
-use std::sync::Arc;
+
 
 pub fn init_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
@@ -18,6 +19,15 @@ pub fn init_routes(cfg: &mut web::ServiceConfig) {
         web::resource("/api/alarms/{id}")
             .route(web::get().to(get_alarm))
             .route(web::delete().to(delete_alarm))
+    );
+    cfg.service(
+        web::resource("/").route(web::get().to(dashboard_page))
+    )
+    .service(
+        web::resource("/api/dashboard/stats").route(web::get().to(dashboard_stats))
+    )
+    .service(
+        web::resource("/api/notifications").route(web::get().to(list_notifications))
     );
 }
 
@@ -72,7 +82,7 @@ pub async fn create_alarm(
     // Insert into DB using blocking thread
     let db_clone = db.clone();
     let alarm_insert = alarm.clone();
-    web::block(move || db_clone.insert_alarm(&alarm_insert)).await.map_err(|e| AppError::Internal(e.to_string()))?;
+    let _ = web::block(move || db_clone.insert_alarm(&alarm_insert)).await.map_err(|e| AppError::Internal(e.to_string()))?;
     // Notify scheduler to reload
     let _ = tx.send(SchedulerCommand::Reload).await.map_err(|_| AppError::Internal("Failed to notify scheduler".into()))?;
     // Compute next fire time

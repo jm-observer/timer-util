@@ -3,6 +3,7 @@ mod db;
 mod models;
 mod handlers;
 mod scheduler;
+mod dashboard;
 mod callback;
 mod error;
 

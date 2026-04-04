@@ -3,6 +3,7 @@ use chrono::{Local, NaiveDateTime};
 use serde::{Deserialize, Serialize};
 use timer_util::TimerConf;
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct CreateAlarmRequest {
     pub name: Option<String>,
@@ -15,6 +16,8 @@ pub struct CreateAlarmRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlarmRecord {
+    // Existing fields remain unchanged,
+    // Added as part of extended struct definition for clarity
     pub id: String,
     pub name: String,
     pub alarm_type: String,
@@ -28,7 +31,7 @@ pub struct AlarmRecord {
     pub updated_at: String,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, Deserialize)]
 pub struct AlarmResponse {
     pub id: String,
     pub name: String,
@@ -45,6 +48,58 @@ pub struct AlarmResponse {
 
 #[derive(Serialize)]
 pub struct AlarmListResponse {
+    pub alarms: Vec<AlarmResponse>,
+    pub total: usize,
+}
+
+// New structs for notification logging and dashboard
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct NotificationLog {
+    pub id: i64,
+    pub alarm_id: String,
+    pub alarm_name: String,
+    pub callback_url: String,
+    pub status: String,
+    pub http_status: Option<u16>,
+    pub error_message: Option<String>,
+    pub attempt: i32,
+    pub triggered_at: String,
+    pub completed_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NotificationStats {
+    pub total: usize,
+    pub success: usize,
+    pub failed: usize,
+    pub retrying: usize,
+    pub cancelled: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DashboardStatsResponse {
+    pub total_alarms: usize,
+    pub active_alarms: usize,
+    pub completed_alarms: usize,
+    pub total_notifications: usize,
+    pub successful_notifications: usize,
+    pub failed_notifications: usize,
+    pub recent_notifications: Vec<NotificationLog>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NotificationListResponse {
+    pub notifications: Vec<NotificationLog>,
+    pub total: usize,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub struct NotificationListQuery {
+    pub page: Option<usize>,
+    pub per_page: Option<usize>,
+    pub status: Option<String>,
+    pub alarm_id: Option<String>,
     pub alarms: Vec<AlarmResponse>,
     pub total: usize,
 }

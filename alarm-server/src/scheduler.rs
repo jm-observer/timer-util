@@ -1,19 +1,17 @@
-use crate::models::{AlarmRecord, AlarmResponse};
+use crate::models::AlarmRecord;
 use crate::db::Database;
 use crate::callback::fire_callback;
-use crate::error::AppError;
-use actix_web::web::Data;
 use chrono::{NaiveDateTime, Local};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
 use reqwest::Client;
-use tokio_util::sync::CancellationToken;
-use log::{info, error};
+use log::error;
 // SchedulerCommand is defined in this module
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum SchedulerCommand {
     Reload,
     Shutdown,
@@ -67,7 +65,7 @@ impl Scheduler {
         let cancel_token = tokio_util::sync::CancellationToken::new();
         // For cron alarms, store handle and token? We'll store handle only; cancel will be via abort of handle.
         let handle = tokio::spawn(async move {
-            fire_callback(&client, &alarm_clone, cancel_token).await;
+            fire_callback(&client, &alarm_clone, cancel_token, db.clone()).await;
             if is_once {
                 if let Err(e) = db.update_status(&alarm_clone.id, "completed") {
                     error!("Failed to update status for alarm {}: {}", alarm_clone.id, e);

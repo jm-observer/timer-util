@@ -1,7 +1,7 @@
 // Database module for alarm-server
 use crate::models::AlarmRecord;
 use chrono::Utc;
-use rusqlite::{params, Connection};
+use rusqlite::{params, params_from_iter, Connection};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
@@ -32,6 +32,20 @@ impl Database {
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS notification_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            alarm_id TEXT NOT NULL,
+            alarm_name TEXT NOT NULL DEFAULT '',
+            callback_url TEXT NOT NULL,
+            status TEXT NOT NULL,
+            http_status INTEGER,
+            error_message TEXT,
+            attempt INTEGER NOT NULL DEFAULT 1,
+            triggered_at TEXT NOT NULL,
+            completed_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_notification_logs_alarm_id ON notification_logs(alarm_id);
+        CREATE INDEX IF NOT EXISTS idx_notification_logs_triggered_at ON notification_logs(triggered_at);
         "#;
         let _ = self.conn.lock().unwrap().execute(sql, []);
     }
@@ -127,12 +141,132 @@ impl Database {
         Ok(affected > 0)
     }
 
+    /// Count alarms by status (e.g., "active", "completed")
     pub fn count_by_status(&self, status: &str) -> Result<usize, rusqlite::Error> {
         let sql = "SELECT COUNT(*) FROM alarms WHERE status = ?1";
         let conn = self.conn.lock().unwrap();
+        conn.query_row(sql, params![status], |row| row.get(0))
+    }
+
+    // Insert a notification log entry
+    pub fn insert_notification_log(
+        &self,
+        log: &crate::models::NotificationLog,
+    ) -> Result<(), rusqlite::Error> {
+        let sql = r#"
+            INSERT INTO notification_logs (
+                alarm_id, alarm_name, callback_url, status, http_status, error_message, attempt, triggered_at, completed_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        "#;
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            sql,
+            params![
+                log.alarm_id,
+                log.alarm_name,
+                log.callback_url,
+                log.status,
+                log.http_status.map(|s| s as i64),
+                log.error_message,
+                log.attempt,
+                log.triggered_at,
+                log.completed_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    // List notification logs with optional filters and pagination
+    pub fn list_notification_logs(
+        &self,
+        alarm_id_opt: Option<&str>,
+        status_opt: Option<&str>,
+        page: usize,
+        per_page: usize,
+    ) -> Result<(Vec<crate::models::NotificationLog>, usize), rusqlite::Error> {
+        let mut sql = String::from("SELECT id, alarm_id, alarm_name, callback_url, status, http_status, error_message, attempt, triggered_at, completed_at FROM notification_logs");
+        let mut conditions = Vec::new();
+        let mut params_vec: Vec<rusqlite::types::Value> = Vec::new();
+        if let Some(aid) = alarm_id_opt {
+            conditions.push("alarm_id = ?");
+            params_vec.push(rusqlite::types::Value::from(aid.to_string()));
+        }
+        if let Some(st) = status_opt {
+            conditions.push("status = ?");
+            params_vec.push(rusqlite::types::Value::from(st.to_string()));
+        }
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+        // Count total
+        let count_sql = format!("SELECT COUNT(*) FROM ({})", sql);
+        let conn = self.conn.lock().unwrap();
+        let total: usize =
+            conn.query_row(&count_sql, params_from_iter(params_vec.iter()), |row| {
+                row.get(0)
+            })?;
+
+        // Add ordering and pagination
+        sql.push_str(" ORDER BY triggered_at DESC LIMIT ? OFFSET ?");
+        params_vec.push(rusqlite::types::Value::from(per_page as i64));
+        let offset = ((page - 1) * per_page) as i64;
+        params_vec.push(rusqlite::types::Value::from(offset));
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(params_vec.iter()), |row| {
+            Ok(crate::models::NotificationLog {
+                id: row.get(0)?,
+                alarm_id: row.get(1)?,
+                alarm_name: row.get(2)?,
+                callback_url: row.get(3)?,
+                status: row.get(4)?,
+                http_status: row.get::<_, Option<i64>>(5)?.map(|v| v as u16),
+                error_message: row.get(6)?,
+                attempt: row.get(7)?,
+                triggered_at: row.get(8)?,
+                completed_at: row.get(9)?,
+            })
+        })?;
+        let mut vec = Vec::new();
+        for r in rows {
+            vec.push(r?);
+        }
+        Ok((vec, total))
+    }
+
+    // Get notification stats
+    pub fn notification_stats(&self) -> Result<crate::models::NotificationStats, rusqlite::Error> {
+        let sql = "SELECT status, COUNT(*) FROM notification_logs GROUP BY status";
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(sql)?;
-        let count: usize = stmt.query_row(params![status], |row| row.get(0))?;
-        Ok(count)
+        let mut total = 0usize;
+        let mut success = 0usize;
+        let mut failed = 0usize;
+        let mut retrying = 0usize;
+        let mut cancelled = 0usize;
+        let rows = stmt.query_map([], |row| {
+            let status: String = row.get(0)?;
+            let cnt: usize = row.get(1)?;
+            Ok((status, cnt))
+        })?;
+        for r in rows {
+            let (status, cnt) = r?;
+            match status.as_str() {
+                "success" => success += cnt,
+                "failed" => failed += cnt,
+                "retrying" => retrying += cnt,
+                "cancelled" => cancelled += cnt,
+                _ => {}
+            }
+            total += cnt;
+        }
+        Ok(crate::models::NotificationStats {
+            total,
+            success,
+            failed,
+            retrying,
+            cancelled,
+        })
     }
 }
 
@@ -144,7 +278,6 @@ mod tests {
         let db = Database::new(":memory:").unwrap();
         db.initialize();
     }
-
     #[test]
     fn test_insert_and_get() {
         let db = Database::new(":memory:").unwrap();
@@ -165,7 +298,6 @@ mod tests {
         let fetched = db.get_alarm("test-id").unwrap().unwrap();
         assert_eq!(fetched.id, rec.id);
     }
-
     #[test]
     fn test_list_and_filter() {
         let db = Database::new(":memory:").unwrap();
