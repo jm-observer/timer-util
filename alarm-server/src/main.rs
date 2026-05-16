@@ -27,7 +27,7 @@ async fn main() -> std::io::Result<()> {
 
     // Initialize database
     let db = Database::new(&config.db_path).expect("Failed to open database");
-    db.initialize();
+    db.initialize().expect("Failed to initialize database schema");
 
     // Recover expired one-time alarms
     recover_expired_alarms(&db);
@@ -62,15 +62,22 @@ async fn main() -> std::io::Result<()> {
 }
 
 fn recover_expired_alarms(db: &Database) {
-    // Mark past once alarms as completed
-    let active = db.list_alarms(Some("active")).unwrap_or_default();
+    let active = match db.list_alarms(Some("active")) {
+        Ok(a) => a,
+        Err(e) => {
+            log::error!("Failed to load active alarms during recovery: {}", e);
+            return;
+        }
+    };
     let now = chrono::Local::now().naive_local();
     for alarm in active {
         if alarm.alarm_type == "once" {
             if let Some(at_str) = alarm.once_at {
                 if let Ok(at) = chrono::NaiveDateTime::parse_from_str(&at_str, "%Y-%m-%dT%H:%M:%S") {
                     if at <= now {
-                        let _ = db.update_status(&alarm.id, "completed");
+                        if let Err(e) = db.update_status(&alarm.id, "completed") {
+                            log::error!("Failed to mark expired alarm {} as completed: {}", alarm.id, e);
+                        }
                     }
                 }
             }

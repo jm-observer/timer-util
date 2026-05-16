@@ -24,7 +24,11 @@ async function loadNotifications(page=1) {
     tbody.innerHTML = '';
     data.notifications.forEach(n => {
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${n.triggered_at}</td><td>${n.alarm_name}</td><td>${n.status}</td><td>${n.http_status||''}</td><td>${n.attempt}</td><td>${n.error_message||''}</td>`;
+        [n.triggered_at, n.alarm_name, n.status, n.http_status||'', n.attempt, n.error_message||''].forEach(val => {
+            const td = document.createElement('td');
+            td.textContent = val;
+            tr.appendChild(td);
+        });
         tbody.appendChild(tr);
     });
     document.getElementById('prev_page').disabled = page <= 1;
@@ -65,7 +69,7 @@ pub async fn dashboard_page(_db: web::Data<Database>) -> Result<HttpResponse, Ap
 }
 
 pub async fn dashboard_stats(db: web::Data<Database>) -> Result<HttpResponse, AppError> {
-    let total_alarms = db.list_alarms(None).map_err(AppError::from)?.len();
+    let total_alarms = db.count_alarms(None).map_err(AppError::from)?;
     let active_alarms = db.count_by_status("active").map_err(AppError::from)?;
     let completed_alarms = db.count_by_status("completed").map_err(AppError::from)?;
     let notif_stats = db.notification_stats().map_err(AppError::from)?;
@@ -89,8 +93,8 @@ pub async fn list_notifications(
     query: web::Query<NotificationListQuery>,
     db: web::Data<Database>,
 ) -> Result<HttpResponse, AppError> {
-    let page = query.page.unwrap_or(1);
-    let per_page = query.per_page.unwrap_or(20);
+    let page = query.page.unwrap_or(1).max(1);
+    let per_page = query.per_page.unwrap_or(20).clamp(1, 100);
     let (notifications, total) = db.list_notification_logs(
         query.alarm_id.as_deref(),
         query.status.as_deref(),

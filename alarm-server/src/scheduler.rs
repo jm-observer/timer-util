@@ -6,14 +6,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use reqwest::Client;
 use log::error;
-// SchedulerCommand is defined in this module
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum SchedulerCommand {
     Reload,
+    #[allow(dead_code)]
     Shutdown,
 }
 
@@ -21,17 +21,12 @@ pub struct Scheduler {
     rx: Receiver<SchedulerCommand>,
     db: Arc<Database>,
     http_client: Client,
-    active_callbacks: HashMap<String, JoinHandle<()>>,
+    active_callbacks: HashMap<String, (JoinHandle<()>, CancellationToken)>,
 }
 
 impl Scheduler {
     pub fn new(rx: Receiver<SchedulerCommand>, db: Arc<Database>, http_client: Client) -> Self {
-        Self {
-            rx,
-            db,
-            http_client,
-            active_callbacks: HashMap::new(),
-        }
+        Self { rx, db, http_client, active_callbacks: HashMap::new() }
     }
 
     fn compute_next_fire(alarm: &AlarmRecord, now: NaiveDateTime) -> Option<NaiveDateTime> {
@@ -50,53 +45,66 @@ impl Scheduler {
         }
     }
 
-    fn trigger_alarm(&mut self, alarm: &AlarmRecord) {
-        // Cancel previous callback for cron alarms
-        if alarm.alarm_type == "cron" {
-            if let Some(prev) = self.active_callbacks.remove(&alarm.id) {
-                prev.abort();
-            }
+    fn cancel_callback(&mut self, alarm_id: &str) {
+        if let Some((handle, token)) = self.active_callbacks.remove(alarm_id) {
+            token.cancel();
+            handle.abort();
         }
+    }
+
+    fn trigger_alarm(&mut self, alarm: &AlarmRecord) {
+        // Cancel any in-flight callback for this alarm
+        self.cancel_callback(&alarm.id);
+
         let client = self.http_client.clone();
         let alarm_clone = alarm.clone();
         let db = self.db.clone();
         let is_once = alarm.alarm_type == "once";
-        // Create a cancellation token
-        let cancel_token = tokio_util::sync::CancellationToken::new();
-        // For cron alarms, store handle and token? We'll store handle only; cancel will be via abort of handle.
+        let cancel_token = CancellationToken::new();
+        let cancel_child = cancel_token.child_token();
         let handle = tokio::spawn(async move {
-            fire_callback(&client, &alarm_clone, cancel_token, db.clone()).await;
+            fire_callback(&client, &alarm_clone, cancel_child, db.clone()).await;
             if is_once {
                 if let Err(e) = db.update_status(&alarm_clone.id, "completed") {
                     error!("Failed to update status for alarm {}: {}", alarm_clone.id, e);
                 }
             }
         });
-        if !is_once {
-            self.active_callbacks.insert(alarm.id.clone(), handle);
-        }
+        self.active_callbacks.insert(alarm.id.clone(), (handle, cancel_token));
     }
 
     pub async fn run(mut self) {
         loop {
-            // Load active alarms
-            let alarms_res = self.db.list_alarms(Some("active"));
-            let alarms = match alarms_res {
+            let alarms = match self.db.list_alarms(Some("active")) {
                 Ok(a) => a,
                 Err(e) => {
                     error!("Failed to list alarms: {}", e);
                     vec![]
                 }
             };
+
+            // Cancel callbacks for alarms that are no longer active
+            let active_ids: std::collections::HashSet<&str> =
+                alarms.iter().map(|a| a.id.as_str()).collect();
+            let removed: Vec<String> = self.active_callbacks.keys()
+                .filter(|id| !active_ids.contains(id.as_str()))
+                .cloned()
+                .collect();
+            for id in removed {
+                self.cancel_callback(&id);
+            }
+
+            // Clean up finished handles
+            self.active_callbacks.retain(|_, (handle, _)| !handle.is_finished());
+
             let now = Local::now().naive_local();
-            // Compute next fire times
-            let mut fire_list: Vec<(AlarmRecord, NaiveDateTime)> = Vec::new();
+            let mut fire_list: Vec<(String, NaiveDateTime)> = Vec::new();
             for alarm in &alarms {
                 if let Some(next) = Self::compute_next_fire(alarm, now) {
-                    fire_list.push((alarm.clone(), next));
+                    fire_list.push((alarm.id.clone(), next));
                 }
             }
-            // Determine nearest time
+
             let nearest_opt = fire_list.iter().map(|(_, t)| *t).min();
             let sleep_duration = match nearest_opt {
                 Some(t) if t > now => {
@@ -106,12 +114,20 @@ impl Scheduler {
                 Some(_) => std::time::Duration::from_secs(0),
                 None => std::time::Duration::from_secs(3600),
             };
+
             tokio::select! {
                 _ = tokio::time::sleep(sleep_duration) => {
                     let now2 = Local::now().naive_local();
-                    for (alarm, fire_at) in &fire_list {
+                    for (alarm_id, fire_at) in &fire_list {
                         if *fire_at <= now2 {
-                            self.trigger_alarm(alarm);
+                            // Re-verify the alarm is still active before triggering
+                            match self.db.get_alarm(alarm_id) {
+                                Ok(Some(current)) if current.status == "active" => {
+                                    self.trigger_alarm(&current);
+                                }
+                                Ok(_) => {}
+                                Err(e) => error!("Failed to verify alarm {} before trigger: {}", alarm_id, e),
+                            }
                         }
                     }
                 }
@@ -119,9 +135,8 @@ impl Scheduler {
                     match cmd_opt {
                         Some(SchedulerCommand::Reload) => continue,
                         Some(SchedulerCommand::Shutdown) | None => {
-                            // Cancel any active callbacks
-                            for (_, handle) in self.active_callbacks.drain() {
-                                handle.abort();
+                            for id in self.active_callbacks.keys().cloned().collect::<Vec<_>>() {
+                                self.cancel_callback(&id);
                             }
                             break;
                         }

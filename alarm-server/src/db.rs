@@ -2,7 +2,7 @@
 use crate::models::AlarmRecord;
 use chrono::Utc;
 use rusqlite::{params, params_from_iter, Connection};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Clone)]
 pub struct Database {
@@ -17,8 +17,12 @@ impl Database {
         })
     }
 
+    fn lock_conn(&self) -> MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// Create the alarms table if it does not exist.
-    pub fn initialize(&self) {
+    pub fn initialize(&self) -> Result<(), rusqlite::Error> {
         let sql = r#"
         CREATE TABLE IF NOT EXISTS alarms (
             id TEXT PRIMARY KEY,
@@ -47,7 +51,7 @@ impl Database {
         CREATE INDEX IF NOT EXISTS idx_notification_logs_alarm_id ON notification_logs(alarm_id);
         CREATE INDEX IF NOT EXISTS idx_notification_logs_triggered_at ON notification_logs(triggered_at);
         "#;
-        let _ = self.conn.lock().unwrap().execute(sql, []);
+        self.lock_conn().execute_batch(sql)
     }
 
     pub fn insert_alarm(&self, alarm: &AlarmRecord) -> Result<(), rusqlite::Error> {
@@ -56,7 +60,7 @@ impl Database {
             INSERT INTO alarms (id, name, alarm_type, cron_expr, once_at, callback_url, callback_body, status, created_at, updated_at)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
         "#;
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         conn.execute(
             sql,
             params![
@@ -77,7 +81,7 @@ impl Database {
 
     pub fn get_alarm(&self, id: &str) -> Result<Option<AlarmRecord>, rusqlite::Error> {
         let sql = "SELECT id, name, alarm_type, cron_expr, once_at, callback_url, callback_body, status, created_at, updated_at FROM alarms WHERE id = ?1";
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(sql)?;
         let mut rows = stmt.query(params![id])?;
         if let Some(row) = rows.next()? {
@@ -100,7 +104,7 @@ impl Database {
 
     pub fn list_alarms(&self, status: Option<&str>) -> Result<Vec<AlarmRecord>, rusqlite::Error> {
         let sql = "SELECT id, name, alarm_type, cron_expr, once_at, callback_url, callback_body, status, created_at, updated_at FROM alarms WHERE (?1 IS NULL OR status = ?1)";
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(sql)?;
         let rows = stmt.query_map(params![status], |row| {
             Ok(AlarmRecord {
@@ -125,7 +129,7 @@ impl Database {
 
     pub fn delete_alarm(&self, id: &str) -> Result<bool, rusqlite::Error> {
         let sql = "DELETE FROM alarms WHERE id = ?1";
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let affected = conn.execute(sql, params![id])?;
         Ok(affected > 0)
     }
@@ -136,16 +140,27 @@ impl Database {
             .naive_utc()
             .format("%Y-%m-%dT%H:%M:%S")
             .to_string();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let affected = conn.execute(sql, params![status, now, id])?;
         Ok(affected > 0)
     }
 
+    /// Count alarms, optionally filtered by status.
+    pub fn count_alarms(&self, status: Option<&str>) -> Result<usize, rusqlite::Error> {
+        let conn = self.lock_conn();
+        match status {
+            Some(s) => conn.query_row(
+                "SELECT COUNT(*) FROM alarms WHERE status = ?1",
+                params![s],
+                |row| row.get(0),
+            ),
+            None => conn.query_row("SELECT COUNT(*) FROM alarms", [], |row| row.get(0)),
+        }
+    }
+
     /// Count alarms by status (e.g., "active", "completed")
     pub fn count_by_status(&self, status: &str) -> Result<usize, rusqlite::Error> {
-        let sql = "SELECT COUNT(*) FROM alarms WHERE status = ?1";
-        let conn = self.conn.lock().unwrap();
-        conn.query_row(sql, params![status], |row| row.get(0))
+        self.count_alarms(Some(status))
     }
 
     // Insert a notification log entry
@@ -158,7 +173,7 @@ impl Database {
                 alarm_id, alarm_name, callback_url, status, http_status, error_message, attempt, triggered_at, completed_at
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
         "#;
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         conn.execute(
             sql,
             params![
@@ -201,7 +216,7 @@ impl Database {
         }
         // Count total
         let count_sql = format!("SELECT COUNT(*) FROM ({})", sql);
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let total: usize =
             conn.query_row(&count_sql, params_from_iter(params_vec.iter()), |row| {
                 row.get(0)
@@ -237,7 +252,7 @@ impl Database {
     // Get notification stats
     pub fn notification_stats(&self) -> Result<crate::models::NotificationStats, rusqlite::Error> {
         let sql = "SELECT status, COUNT(*) FROM notification_logs GROUP BY status";
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(sql)?;
         let mut total = 0usize;
         let mut success = 0usize;

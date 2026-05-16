@@ -3,7 +3,6 @@ use chrono::{Local, NaiveDateTime};
 use serde::{Deserialize, Serialize};
 use timer_util::TimerConf;
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct CreateAlarmRequest {
     pub name: Option<String>,
@@ -93,15 +92,12 @@ pub struct NotificationListResponse {
     pub total: usize,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct NotificationListQuery {
     pub page: Option<usize>,
     pub per_page: Option<usize>,
     pub status: Option<String>,
     pub alarm_id: Option<String>,
-    pub alarms: Vec<AlarmResponse>,
-    pub total: usize,
 }
 
 #[derive(Deserialize)]

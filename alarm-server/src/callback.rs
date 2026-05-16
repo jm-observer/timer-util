@@ -20,82 +20,91 @@ async fn send_request(client: &Client, alarm: &AlarmRecord) -> Result<reqwest::R
     Ok(resp)
 }
 
+const MAX_ATTEMPTS: i32 = 20;
+
+fn log_result(db: &Database, log: &crate::models::NotificationLog) {
+    if let Err(e) = db.insert_notification_log(log) {
+        error!("Failed to insert notification log: {}", e);
+    }
+}
+
 /// Fire the callback with exponential backoff retry logic.
 /// `cancel` token can be used to abort the retry loop (e.g., when a cron alarm is rescheduled).
 pub async fn fire_callback(client: &Client, alarm: &AlarmRecord, cancel: CancellationToken, db: Arc<Database>) {
-    // Record the trigger timestamp
     let triggered_at = Utc::now().naive_utc().format("%Y-%m-%dT%H:%M:%S").to_string();
     let mut attempt: i32 = 1;
     let alarm_name = alarm.name.clone();
     let alarm_id = alarm.id.clone();
     let callback_url = alarm.callback_url.clone();
-    // Loop start
     let mut retry_interval = Duration::from_secs(5);
-    let max_interval = Duration::from_secs(600); // 10 minutes
+    let max_interval = Duration::from_secs(600);
 
     loop {
-        // Determine status and log before sending? We'll send then log based on result.
+        let now_str = || Utc::now().naive_utc().format("%Y-%m-%dT%H:%M:%S").to_string();
         match send_request(client, alarm).await {
             Ok(resp) if resp.status().is_success() => {
-                info!("Alarm '{}' callback succeeded", alarm.id);
-                // Insert success log
-                let log = crate::models::NotificationLog {
-                    id: 0, // placeholder, autoincrement
+                info!("Alarm '{}' callback succeeded on attempt {}", alarm_id, attempt);
+                log_result(&db, &crate::models::NotificationLog {
+                    id: 0,
                     alarm_id: alarm_id.clone(),
                     alarm_name: alarm_name.clone(),
                     callback_url: callback_url.clone(),
                     status: "success".to_string(),
-                    http_status: Some(resp.status().as_u16()), // need i32? Actually field is Option<u16>
-                    error_message: None,
-                    attempt,
-                    triggered_at: triggered_at.clone(),
-                    completed_at: Utc::now().naive_utc().format("%Y-%m-%dT%H:%M:%S").to_string(),
-                };
-                let _ = db.insert_notification_log(&log);
-                break;
-            }
-            Ok(resp) => {
-                warn!("Alarm '{}' callback got status {}", alarm.id, resp.status());
-                // Insert retrying log with status "retrying" and http_status
-                let log = crate::models::NotificationLog {
-                    id: 0,
-                    alarm_id: alarm_id.clone(),
-                    alarm_name: alarm_name.clone(),
-                    callback_url: callback_url.clone(),
-                    status: "retrying".to_string(),
                     http_status: Some(resp.status().as_u16()),
                     error_message: None,
                     attempt,
                     triggered_at: triggered_at.clone(),
-                    completed_at: Utc::now().naive_utc().format("%Y-%m-%dT%H:%M:%S").to_string(),
-                };
-                let _ = db.insert_notification_log(&log);
+                    completed_at: now_str(),
+                });
+                break;
             }
-            Err(e) => {
-                error!("Alarm '{}' callback failed: {}", alarm.id, e);
-                // Insert retrying log with error_message
-                let log = crate::models::NotificationLog {
+            Ok(resp) => {
+                warn!("Alarm '{}' callback got status {} (attempt {})", alarm_id, resp.status(), attempt);
+                let is_last = attempt >= MAX_ATTEMPTS;
+                log_result(&db, &crate::models::NotificationLog {
                     id: 0,
                     alarm_id: alarm_id.clone(),
                     alarm_name: alarm_name.clone(),
                     callback_url: callback_url.clone(),
-                    status: "retrying".to_string(),
+                    status: if is_last { "failed".to_string() } else { "retrying".to_string() },
+                    http_status: Some(resp.status().as_u16()),
+                    error_message: None,
+                    attempt,
+                    triggered_at: triggered_at.clone(),
+                    completed_at: now_str(),
+                });
+                if is_last {
+                    error!("Alarm '{}' callback gave up after {} attempts", alarm_id, MAX_ATTEMPTS);
+                    break;
+                }
+            }
+            Err(e) => {
+                error!("Alarm '{}' callback error (attempt {}): {}", alarm_id, attempt, e);
+                let is_last = attempt >= MAX_ATTEMPTS;
+                log_result(&db, &crate::models::NotificationLog {
+                    id: 0,
+                    alarm_id: alarm_id.clone(),
+                    alarm_name: alarm_name.clone(),
+                    callback_url: callback_url.clone(),
+                    status: if is_last { "failed".to_string() } else { "retrying".to_string() },
                     http_status: None,
                     error_message: Some(e.to_string()),
                     attempt,
                     triggered_at: triggered_at.clone(),
-                    completed_at: Utc::now().naive_utc().format("%Y-%m-%dT%H:%M:%S").to_string(),
-                };
-                let _ = db.insert_notification_log(&log);
+                    completed_at: now_str(),
+                });
+                if is_last {
+                    error!("Alarm '{}' callback gave up after {} attempts", alarm_id, MAX_ATTEMPTS);
+                    break;
+                }
             }
         }
-        // Wait for retry interval or cancellation
+
         tokio::select! {
             _ = sleep(retry_interval) => {}
             _ = cancel.cancelled() => {
-                info!("Alarm '{}' callback retry cancelled", alarm.id);
-                // Insert cancelled log
-                let log = crate::models::NotificationLog {
+                info!("Alarm '{}' callback retry cancelled", alarm_id);
+                log_result(&db, &crate::models::NotificationLog {
                     id: 0,
                     alarm_id: alarm_id.clone(),
                     alarm_name: alarm_name.clone(),
@@ -106,12 +115,11 @@ pub async fn fire_callback(client: &Client, alarm: &AlarmRecord, cancel: Cancell
                     attempt,
                     triggered_at: triggered_at.clone(),
                     completed_at: Utc::now().naive_utc().format("%Y-%m-%dT%H:%M:%S").to_string(),
-                };
-                let _ = db.insert_notification_log(&log);
+                });
                 break;
             }
         }
-        // Increment attempt and exponential backoff
+
         attempt += 1;
         retry_interval = (retry_interval * 2).min(max_interval);
     }
