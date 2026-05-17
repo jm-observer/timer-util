@@ -1,4 +1,26 @@
-[tasks.build-rel]
-script = '''
-docker run --rm -it -v "$(pwd)":/home/rust/src -v "$(pwd)/target/registry":/root/.cargo/registry messense/rust-musl-cross:aarch64-musl cargo build --example arm64_timer --release
-'''
+[config]
+skip_core_tasks = true
+default_to_workspace = false
+
+[tasks.check]
+description = "Run all checks: fmt, clippy, and tests"
+dependencies = ["_check_fmt", "_check_clippy", "_check_test"]
+
+[tasks.prod]
+command = "cargo"
+args = ["build", "--workspace", "--release", "--features", "prod"]
+
+[tasks.default]
+alias = "prod"
+
+[tasks._check_fmt]
+command = "cargo"
+args = ["fmt", "--all"]
+
+[tasks._check_clippy]
+command = "cargo"
+args = ["clippy", "--workspace", "--", "-D", "warnings"]
+
+[tasks._check_test]
+command = "cargo"
+args = ["test", "--workspace", "--exclude", "opencode-client-sdk"]

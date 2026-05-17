@@ -1,4 +1,4 @@
-use actix_web::{http::StatusCode, HttpResponse, ResponseError};
+use actix_web::{HttpResponse, ResponseError, http::StatusCode};
 use serde_json::json;
 
 #[derive(Debug)]

@@ -15,14 +15,9 @@ pub enum TimerError {
         max: u64,
     },
     /// Invalid cron expression.
-    InvalidCronExpression {
-        expression: String,
-        reason: String,
-    },
+    InvalidCronExpression { expression: String, reason: String },
     /// Month field in cron expression is not supported (must be `*`).
-    CronMonthNotSupported {
-        value: String,
-    },
+    CronMonthNotSupported { value: String },
 }
 
 impl fmt::Display for TimerError {
@@ -47,11 +42,7 @@ impl fmt::Display for TimerError {
                 )
             }
             Self::InvalidCronExpression { expression, reason } => {
-                write!(
-                    f,
-                    "invalid cron expression '{}': {}",
-                    expression, reason
-                )
+                write!(f, "invalid cron expression '{}': {}", expression, reason)
             }
             Self::CronMonthNotSupported { value } => {
                 write!(

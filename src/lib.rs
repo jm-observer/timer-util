@@ -3,10 +3,9 @@
 use crate::builder::DayConfBuilder;
 pub use conf::{Hours, Minutes, MonthDays, Seconds, TimerConf, WeekDays};
 pub use data::{
-    Hour, Hour::*, Minute, Minute::*, MonthDay, MonthDay::*, Second, Second::*, WeekDay,
-    WeekDay::*,
+    Hour, Hour::*, Minute, Minute::*, MonthDay, MonthDay::*, Second, Second::*, WeekDay, WeekDay::*,
 };
-pub use error::{TimerError, Result};
+pub use error::{Result, TimerError};
 pub use iter::TimerIter;
 pub use traits::*;
 

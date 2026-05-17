@@ -91,10 +91,12 @@ fn parse_field(field: &str, min: u64, max: u64, expr: &str) -> crate::error::Res
         if part == "*" {
             values.extend(min..=max);
         } else if let Some(step_str) = part.strip_prefix("*/") {
-            let step: u64 = step_str.parse().map_err(|_| TimerError::InvalidCronExpression {
-                expression: expr.to_string(),
-                reason: format!("invalid step: {}", step_str),
-            })?;
+            let step: u64 = step_str
+                .parse()
+                .map_err(|_| TimerError::InvalidCronExpression {
+                    expression: expr.to_string(),
+                    reason: format!("invalid step: {}", step_str),
+                })?;
             if step == 0 {
                 return Err(TimerError::InvalidCronExpression {
                     expression: expr.to_string(),
@@ -108,16 +110,18 @@ fn parse_field(field: &str, min: u64, max: u64, expr: &str) -> crate::error::Res
             }
         } else if part.contains('/') {
             // N-M/S range step
-            let (range_part, step_str) = part.split_once('/').ok_or_else(|| {
-                TimerError::InvalidCronExpression {
+            let (range_part, step_str) =
+                part.split_once('/')
+                    .ok_or_else(|| TimerError::InvalidCronExpression {
+                        expression: expr.to_string(),
+                        reason: "invalid range/step syntax".to_string(),
+                    })?;
+            let step: u64 = step_str
+                .parse()
+                .map_err(|_| TimerError::InvalidCronExpression {
                     expression: expr.to_string(),
-                    reason: "invalid range/step syntax".to_string(),
-                }
-            })?;
-            let step: u64 = step_str.parse().map_err(|_| TimerError::InvalidCronExpression {
-                expression: expr.to_string(),
-                reason: format!("invalid step: {}", step_str),
-            })?;
+                    reason: format!("invalid step: {}", step_str),
+                })?;
             if step == 0 {
                 return Err(TimerError::InvalidCronExpression {
                     expression: expr.to_string(),
@@ -136,10 +140,12 @@ fn parse_field(field: &str, min: u64, max: u64, expr: &str) -> crate::error::Res
             values.extend(start..=end);
         } else {
             // single value
-            let v: u64 = part.parse().map_err(|_| TimerError::InvalidCronExpression {
-                expression: expr.to_string(),
-                reason: format!("invalid value: {}", part),
-            })?;
+            let v: u64 = part
+                .parse()
+                .map_err(|_| TimerError::InvalidCronExpression {
+                    expression: expr.to_string(),
+                    reason: format!("invalid value: {}", part),
+                })?;
             if v < min || v > max {
                 return Err(TimerError::InvalidCronExpression {
                     expression: expr.to_string(),
@@ -156,18 +162,24 @@ fn parse_field(field: &str, min: u64, max: u64, expr: &str) -> crate::error::Res
 }
 
 fn parse_range(s: &str, min: u64, max: u64, expr: &str) -> crate::error::Result<(u64, u64)> {
-    let (start_str, end_str) = s.split_once('-').ok_or_else(|| TimerError::InvalidCronExpression {
-        expression: expr.to_string(),
-        reason: format!("invalid range: {}", s),
-    })?;
-    let start: u64 = start_str.parse().map_err(|_| TimerError::InvalidCronExpression {
-        expression: expr.to_string(),
-        reason: format!("invalid range start: {}", start_str),
-    })?;
-    let end: u64 = end_str.parse().map_err(|_| TimerError::InvalidCronExpression {
-        expression: expr.to_string(),
-        reason: format!("invalid range end: {}", end_str),
-    })?;
+    let (start_str, end_str) =
+        s.split_once('-')
+            .ok_or_else(|| TimerError::InvalidCronExpression {
+                expression: expr.to_string(),
+                reason: format!("invalid range: {}", s),
+            })?;
+    let start: u64 = start_str
+        .parse()
+        .map_err(|_| TimerError::InvalidCronExpression {
+            expression: expr.to_string(),
+            reason: format!("invalid range start: {}", start_str),
+        })?;
+    let end: u64 = end_str
+        .parse()
+        .map_err(|_| TimerError::InvalidCronExpression {
+            expression: expr.to_string(),
+            reason: format!("invalid range end: {}", end_str),
+        })?;
     if start < min || end > max || start > end {
         return Err(TimerError::InvalidCronExpression {
             expression: expr.to_string(),
@@ -321,7 +333,7 @@ mod test {
         let cron_conf = TimerConf::from_cron("0 */15 9,18 * * 1,3,5").unwrap();
 
         let test_times = vec![
-            dt(2024, 3, 11, 0, 0, 0),  // Monday
+            dt(2024, 3, 11, 0, 0, 0),   // Monday
             dt(2024, 3, 13, 9, 15, 0),  // Wednesday
             dt(2024, 3, 15, 18, 45, 0), // Friday
             dt(2024, 3, 16, 10, 0, 0),  // Saturday

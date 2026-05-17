@@ -1,34 +1,27 @@
-use actix_web::{web, HttpResponse};
-use crate::models::{CreateAlarmRequest, AlarmResponse, AlarmListResponse, ListQuery};
 use crate::dashboard::{dashboard_page, dashboard_stats, list_notifications};
 use crate::db::Database;
 use crate::error::AppError;
+use crate::models::{AlarmListResponse, AlarmResponse, CreateAlarmRequest, ListQuery};
 use crate::scheduler::SchedulerCommand;
-use uuid::Uuid;
+use actix_web::{HttpResponse, web};
 use chrono::{Local, NaiveDateTime};
-
+use uuid::Uuid;
 
 pub fn init_routes(cfg: &mut web::ServiceConfig) {
-    cfg.service(
-        web::resource("/api/health").route(web::get().to(health))
-    )
-    .service(
-        web::resource("/api/alarms").route(web::post().to(create_alarm)).route(web::get().to(list_alarms))
-    )
-    .service(
-        web::resource("/api/alarms/{id}")
-            .route(web::get().to(get_alarm))
-            .route(web::delete().to(delete_alarm))
-    );
-    cfg.service(
-        web::resource("/").route(web::get().to(dashboard_page))
-    )
-    .service(
-        web::resource("/api/dashboard/stats").route(web::get().to(dashboard_stats))
-    )
-    .service(
-        web::resource("/api/notifications").route(web::get().to(list_notifications))
-    );
+    cfg.service(web::resource("/api/health").route(web::get().to(health)))
+        .service(
+            web::resource("/api/alarms")
+                .route(web::post().to(create_alarm))
+                .route(web::get().to(list_alarms)),
+        )
+        .service(
+            web::resource("/api/alarms/{id}")
+                .route(web::get().to(get_alarm))
+                .route(web::delete().to(delete_alarm)),
+        );
+    cfg.service(web::resource("/").route(web::get().to(dashboard_page)))
+        .service(web::resource("/api/dashboard/stats").route(web::get().to(dashboard_stats)))
+        .service(web::resource("/api/notifications").route(web::get().to(list_notifications)));
 }
 
 pub async fn health(db: web::Data<Database>) -> Result<HttpResponse, AppError> {
@@ -44,16 +37,24 @@ pub async fn create_alarm(
     // Validate alarm_type
     let alarm_type = body.alarm_type.as_str();
     if alarm_type != "cron" && alarm_type != "once" {
-        return Err(AppError::Validation("alarm_type must be 'cron' or 'once'".into()));
+        return Err(AppError::Validation(
+            "alarm_type must be 'cron' or 'once'".into(),
+        ));
     }
     // Validate fields according to type
     if alarm_type == "cron" {
-        let expr = body.cron_expr.as_ref().ok_or_else(|| AppError::Validation("cron_expr required for cron alarm".into()))?;
+        let expr = body
+            .cron_expr
+            .as_ref()
+            .ok_or_else(|| AppError::Validation("cron_expr required for cron alarm".into()))?;
         // Validate cron expression using TimerConf
         timer_util::TimerConf::from_cron(expr).map_err(|e| AppError::Validation(e.to_string()))?;
     } else {
         // once
-        let once_str = body.once_at.as_ref().ok_or_else(|| AppError::Validation("once_at required for once alarm".into()))?;
+        let once_str = body
+            .once_at
+            .as_ref()
+            .ok_or_else(|| AppError::Validation("once_at required for once alarm".into()))?;
         let at = NaiveDateTime::parse_from_str(once_str, "%Y-%m-%dT%H:%M:%S")
             .map_err(|_| AppError::Validation("invalid once_at datetime format".into()))?;
         if at <= Local::now().naive_local() {
@@ -74,7 +75,10 @@ pub async fn create_alarm(
         cron_expr: body.cron_expr.clone(),
         once_at: body.once_at.clone(),
         callback_url: body.callback_url.clone(),
-        callback_body: body.callback_body.as_ref().map(|v| serde_json::to_string(v).unwrap()),
+        callback_body: body
+            .callback_body
+            .as_ref()
+            .map(|v| serde_json::to_string(v).unwrap()),
         status: "active".to_string(),
         created_at: "".to_string(), // will be set by DB
         updated_at: "".to_string(),
@@ -82,11 +86,18 @@ pub async fn create_alarm(
     // Insert into DB using blocking thread
     let db_clone = db.clone();
     let alarm_insert = alarm.clone();
-    let _ = web::block(move || db_clone.insert_alarm(&alarm_insert)).await.map_err(|e| AppError::Internal(e.to_string()))?;
+    let _ = web::block(move || db_clone.insert_alarm(&alarm_insert))
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
     // Notify scheduler to reload
-    let _ = tx.send(SchedulerCommand::Reload).await.map_err(|_| AppError::Internal("Failed to notify scheduler".into()))?;
+    let _ = tx
+        .send(SchedulerCommand::Reload)
+        .await
+        .map_err(|_| AppError::Internal("Failed to notify scheduler".into()))?;
     // Compute next fire time
-    let next = alarm.next_fire_at().map_err(|e| AppError::Internal(e.to_string()))?;
+    let next = alarm
+        .next_fire_at()
+        .map_err(|e| AppError::Internal(e.to_string()))?;
     let resp = AlarmResponse {
         id: alarm.id,
         name: alarm.name,
@@ -111,7 +122,9 @@ pub async fn list_alarms(
     let alarms = db.list_alarms(status_opt).map_err(AppError::from)?;
     let mut resp_alarms = Vec::new();
     for a in alarms {
-        let next = a.next_fire_at().map_err(|e| AppError::Internal(e.to_string()))?;
+        let next = a
+            .next_fire_at()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
         let resp = AlarmResponse {
             id: a.id,
             name: a.name,
@@ -140,9 +153,13 @@ pub async fn get_alarm(
     db: web::Data<Database>,
 ) -> Result<HttpResponse, AppError> {
     let id = path.into_inner();
-    let alarm = db.get_alarm(&id).map_err(AppError::from)?
+    let alarm = db
+        .get_alarm(&id)
+        .map_err(AppError::from)?
         .ok_or_else(|| AppError::NotFound(format!("Alarm {} not found", id)))?;
-    let next = alarm.next_fire_at().map_err(|e| AppError::Internal(e.to_string()))?;
+    let next = alarm
+        .next_fire_at()
+        .map_err(|e| AppError::Internal(e.to_string()))?;
     let resp = AlarmResponse {
         id: alarm.id,
         name: alarm.name,
@@ -170,6 +187,9 @@ pub async fn delete_alarm(
         return Err(AppError::NotFound(format!("Alarm {} not found", id)));
     }
     // Notify scheduler
-    let _ = tx.send(SchedulerCommand::Reload).await.map_err(|_| AppError::Internal("Failed to notify scheduler".into()))?;
+    let _ = tx
+        .send(SchedulerCommand::Reload)
+        .await
+        .map_err(|_| AppError::Internal("Failed to notify scheduler".into()))?;
     Ok(HttpResponse::NoContent().finish())
 }

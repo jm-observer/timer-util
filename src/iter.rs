@@ -1,5 +1,5 @@
-use chrono::NaiveDateTime;
 use crate::conf::TimerConf;
+use chrono::NaiveDateTime;
 
 /// An iterator that yields scheduled `NaiveDateTime` values from a `TimerConf`.
 ///
@@ -11,8 +11,16 @@ pub struct TimerIter<'a> {
 }
 
 impl<'a> TimerIter<'a> {
-    pub(crate) fn new(conf: &'a TimerConf, start: NaiveDateTime, end: Option<NaiveDateTime>) -> Self {
-        Self { conf, current: start, end }
+    pub(crate) fn new(
+        conf: &'a TimerConf,
+        start: NaiveDateTime,
+        end: Option<NaiveDateTime>,
+    ) -> Self {
+        Self {
+            conf,
+            current: start,
+            end,
+        }
     }
 }
 

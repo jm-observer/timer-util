@@ -25,7 +25,9 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 log = "0.4"
 tokio-util = "0.7"
-custom-utils = {version = "0.10.21"}
+custom-utils = { version = "0.11.7" }
+toml = "0.8"
+anyhow = "1"
 
 [features]
 default = []

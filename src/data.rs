@@ -1,6 +1,6 @@
+use crate::TryFromData;
 use crate::error::TimerError;
 use crate::traits::{AsBizData, FromData};
-use crate::TryFromData;
 use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday as CWeekday};
 
 /// Defines a time-unit enum with automatic trait implementations.

@@ -74,7 +74,11 @@ impl TimerConf {
     }
 
     /// Returns an iterator over scheduled times within `[start, end]`.
-    pub fn iter_range(&self, start: NaiveDateTime, end: NaiveDateTime) -> crate::iter::TimerIter<'_> {
+    pub fn iter_range(
+        &self,
+        start: NaiveDateTime,
+        end: NaiveDateTime,
+    ) -> crate::iter::TimerIter<'_> {
         crate::iter::TimerIter::new(self, start, Some(end))
     }
 
@@ -489,7 +493,9 @@ mod test {
         let month_days0 = WeekDays::default_array(&[W1, W3, W5, W7]).to_month_days(W3);
         assert_eq!(
             month_days0.to_vec(),
-            vec![1, 3, 5, 6, 8, 10, 12, 13, 15, 17, 19, 20, 22, 24, 26, 27, 29, 31]
+            vec![
+                1, 3, 5, 6, 8, 10, 12, 13, 15, 17, 19, 20, 22, 24, 26, 27, 29, 31
+            ]
         );
 
         let month_days1 = WeekDays::default_array(&[W1, W3, W5]).to_month_days(W1);
@@ -500,7 +506,9 @@ mod test {
         let month_days2 = month_days0.merge(&month_days1);
         assert_eq!(
             month_days2.to_vec(),
-            vec![1, 3, 5, 6, 8, 10, 12, 13, 15, 17, 19, 20, 22, 24, 26, 27, 29, 31]
+            vec![
+                1, 3, 5, 6, 8, 10, 12, 13, 15, 17, 19, 20, 22, 24, 26, 27, 29, 31
+            ]
         );
     }
     #[test]
@@ -742,11 +750,14 @@ mod test {
             .build_with_second(Seconds::default_value(S0));
         let start = datetime(2024, 1, 1, 0, 0, 0);
         let times: Vec<_> = conf.iter_from(start).take(3).collect();
-        assert_eq!(times, vec![
-            datetime(2024, 2, 1, 0, 0, 0),
-            datetime(2024, 3, 1, 0, 0, 0),
-            datetime(2024, 4, 1, 0, 0, 0),
-        ]);
+        assert_eq!(
+            times,
+            vec![
+                datetime(2024, 2, 1, 0, 0, 0),
+                datetime(2024, 3, 1, 0, 0, 0),
+                datetime(2024, 4, 1, 0, 0, 0),
+            ]
+        );
     }
 
     #[test]
@@ -760,7 +771,9 @@ mod test {
         let end = datetime(2020, 5, 15, 15, 30, 30);
 
         let from_datetimes = conf.datetimes(start..=end).unwrap();
-        let from_iter: Vec<_> = conf.iter_range(start.sub(Duration::seconds(1)), end).collect();
+        let from_iter: Vec<_> = conf
+            .iter_range(start.sub(Duration::seconds(1)), end)
+            .collect();
         assert_eq!(from_datetimes, from_iter);
     }
 
@@ -790,19 +803,31 @@ mod test {
             .build_with_minute(Minutes::default_value(M0))
             .build_with_second(Seconds::default_value(S0));
         let t = datetime(2024, 1, 1, 0, 0, 0);
-        assert!(matches!(conf.datetimes(t..), Err(crate::error::TimerError::UnboundedRange)));
-        assert!(matches!(conf.datetimes(..t), Err(crate::error::TimerError::UnboundedRange)));
+        assert!(matches!(
+            conf.datetimes(t..),
+            Err(crate::error::TimerError::UnboundedRange)
+        ));
+        assert!(matches!(
+            conf.datetimes(..t),
+            Err(crate::error::TimerError::UnboundedRange)
+        ));
     }
 
     #[test]
     fn test_value_out_of_range() {
         assert!(matches!(
             MonthDay::try_from_data(0),
-            Err(crate::error::TimerError::ValueOutOfRange { type_name: "MonthDay", .. })
+            Err(crate::error::TimerError::ValueOutOfRange {
+                type_name: "MonthDay",
+                ..
+            })
         ));
         assert!(matches!(
             Hour::try_from_data(24),
-            Err(crate::error::TimerError::ValueOutOfRange { type_name: "Hour", .. })
+            Err(crate::error::TimerError::ValueOutOfRange {
+                type_name: "Hour",
+                ..
+            })
         ));
     }
 }

@@ -1,14 +1,14 @@
-use crate::models::AlarmRecord;
-use crate::db::Database;
 use crate::callback::fire_callback;
-use chrono::{NaiveDateTime, Local};
+use crate::db::Database;
+use crate::models::AlarmRecord;
+use chrono::{Local, NaiveDateTime};
+use log::error;
+use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use reqwest::Client;
-use log::error;
 
 #[derive(Debug)]
 pub enum SchedulerCommand {
@@ -26,7 +26,12 @@ pub struct Scheduler {
 
 impl Scheduler {
     pub fn new(rx: Receiver<SchedulerCommand>, db: Arc<Database>, http_client: Client) -> Self {
-        Self { rx, db, http_client, active_callbacks: HashMap::new() }
+        Self {
+            rx,
+            db,
+            http_client,
+            active_callbacks: HashMap::new(),
+        }
     }
 
     fn compute_next_fire(alarm: &AlarmRecord, now: NaiveDateTime) -> Option<NaiveDateTime> {
@@ -66,11 +71,15 @@ impl Scheduler {
             fire_callback(&client, &alarm_clone, cancel_child, db.clone()).await;
             if is_once {
                 if let Err(e) = db.update_status(&alarm_clone.id, "completed") {
-                    error!("Failed to update status for alarm {}: {}", alarm_clone.id, e);
+                    error!(
+                        "Failed to update status for alarm {}: {}",
+                        alarm_clone.id, e
+                    );
                 }
             }
         });
-        self.active_callbacks.insert(alarm.id.clone(), (handle, cancel_token));
+        self.active_callbacks
+            .insert(alarm.id.clone(), (handle, cancel_token));
     }
 
     pub async fn run(mut self) {
@@ -86,7 +95,9 @@ impl Scheduler {
             // Cancel callbacks for alarms that are no longer active
             let active_ids: std::collections::HashSet<&str> =
                 alarms.iter().map(|a| a.id.as_str()).collect();
-            let removed: Vec<String> = self.active_callbacks.keys()
+            let removed: Vec<String> = self
+                .active_callbacks
+                .keys()
                 .filter(|id| !active_ids.contains(id.as_str()))
                 .cloned()
                 .collect();
@@ -95,7 +106,8 @@ impl Scheduler {
             }
 
             // Clean up finished handles
-            self.active_callbacks.retain(|_, (handle, _)| !handle.is_finished());
+            self.active_callbacks
+                .retain(|_, (handle, _)| !handle.is_finished());
 
             let now = Local::now().naive_local();
             let mut fire_list: Vec<(String, NaiveDateTime)> = Vec::new();
@@ -108,7 +120,9 @@ impl Scheduler {
             let nearest_opt = fire_list.iter().map(|(_, t)| *t).min();
             let sleep_duration = match nearest_opt {
                 Some(t) if t > now => {
-                    let dur = (t - now).to_std().unwrap_or_else(|_| std::time::Duration::from_secs(3600));
+                    let dur = (t - now)
+                        .to_std()
+                        .unwrap_or_else(|_| std::time::Duration::from_secs(3600));
                     dur.min(std::time::Duration::from_secs(3600))
                 }
                 Some(_) => std::time::Duration::from_secs(0),

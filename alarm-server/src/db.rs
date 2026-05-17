@@ -1,7 +1,7 @@
 // Database module for alarm-server
 use crate::models::AlarmRecord;
 use chrono::Utc;
-use rusqlite::{params, params_from_iter, Connection};
+use rusqlite::{Connection, params, params_from_iter};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Clone)]
@@ -199,7 +199,9 @@ impl Database {
         page: usize,
         per_page: usize,
     ) -> Result<(Vec<crate::models::NotificationLog>, usize), rusqlite::Error> {
-        let mut sql = String::from("SELECT id, alarm_id, alarm_name, callback_url, status, http_status, error_message, attempt, triggered_at, completed_at FROM notification_logs");
+        let mut sql = String::from(
+            "SELECT id, alarm_id, alarm_name, callback_url, status, http_status, error_message, attempt, triggered_at, completed_at FROM notification_logs",
+        );
         let mut conditions = Vec::new();
         let mut params_vec: Vec<rusqlite::types::Value> = Vec::new();
         if let Some(aid) = alarm_id_opt {
