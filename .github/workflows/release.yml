@@ -47,9 +47,13 @@ jobs:
           BINS="alarm-server alarm-cli"
           for bin in $BINS; do
             SRC="target/${{ matrix.target }}/release/${bin}"
-            if [ -f "${SRC}.exe" ]; then SRC="${SRC}.exe"; fi
+            EXT=""
+            if [ -f "${SRC}.exe" ]; then
+              SRC="${SRC}.exe"
+              EXT=".exe"
+            fi
             if [ -f "$SRC" ]; then
-              cp "$SRC" "dist/$(basename $SRC)_${{ matrix.target }}"
+              cp "$SRC" "dist/${bin}-${{ matrix.target }}${EXT}"
             fi
           done
 

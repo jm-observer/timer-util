@@ -1,0 +1,15 @@
+[Unit]
+Description=Alarm Server - Recurring alarm scheduler with HTTP callbacks
+After=network.target
+
+[Service]
+Type=simple
+User=alarm-server
+Group=alarm-server
+ExecStart=/usr/local/bin/alarm-server -w /etc/alarm-server
+Restart=on-failure
+RestartSec=5
+WorkingDirectory=/etc/alarm-server
+
+[Install]
+WantedBy=multi-user.target
