@@ -90,8 +90,7 @@ pub async fn create_alarm(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     // Notify scheduler to reload
-    let _ = tx
-        .send(SchedulerCommand::Reload)
+    tx.send(SchedulerCommand::Reload)
         .await
         .map_err(|_| AppError::Internal("Failed to notify scheduler".into()))?;
     // Compute next fire time
@@ -187,8 +186,7 @@ pub async fn delete_alarm(
         return Err(AppError::NotFound(format!("Alarm {} not found", id)));
     }
     // Notify scheduler
-    let _ = tx
-        .send(SchedulerCommand::Reload)
+    tx.send(SchedulerCommand::Reload)
         .await
         .map_err(|_| AppError::Internal("Failed to notify scheduler".into()))?;
     Ok(HttpResponse::NoContent().finish())

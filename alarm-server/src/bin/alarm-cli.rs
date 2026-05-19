@@ -17,7 +17,12 @@ struct TomlConfig {
 }
 
 #[derive(Parser)]
-#[command(name = "alarm-cli", version, author, about = "CLI tool for managing alarms on alarm-server. Supports creating one-time or cron-based recurring alarms with HTTP callback notifications.")]
+#[command(
+    name = "alarm-cli",
+    version,
+    author,
+    about = "CLI tool for managing alarms on alarm-server. Supports creating one-time or cron-based recurring alarms with HTTP callback notifications."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -116,12 +121,11 @@ fn get_server_url(cli_server: &str, arg_workspace: &Option<String>) -> String {
     }
     if let Ok(workspace) = custom_utils::args::workspace(arg_workspace, APP_NAME) {
         let config_path = workspace.join(CONFIG_FILENAME);
-        if let Ok(content) = std::fs::read_to_string(&config_path) {
-            if let Ok(cfg) = toml::from_str::<TomlConfig>(&content) {
-                if let Some(port) = cfg.port {
-                    return format!("http://127.0.0.1:{}", port);
-                }
-            }
+        if let Ok(content) = std::fs::read_to_string(&config_path)
+            && let Ok(cfg) = toml::from_str::<TomlConfig>(&content)
+            && let Some(port) = cfg.port
+        {
+            return format!("http://127.0.0.1:{}", port);
         }
     }
     cli_server.to_string()
@@ -282,7 +286,8 @@ fn main() -> ExitCode {
                 println!("{}", svc.generate_unit());
                 Ok(())
             } else {
-                svc.install().map_err(|e| eprintln!("Install failed: {}", e))
+                svc.install()
+                    .map_err(|e| eprintln!("Install failed: {}", e))
             }
         }
     };
@@ -310,9 +315,8 @@ fn handle_response(resp: Result<reqwest::blocking::Response, reqwest::Error>) ->
                 }
             } else {
                 eprintln!("Error: HTTP {}", r.status());
-                match r.text() {
-                    Ok(text) => eprintln!("Response body: {}", text),
-                    Err(_) => {}
+                if let Ok(text) = r.text() {
+                    eprintln!("Response body: {}", text);
                 }
                 Err(())
             }
@@ -347,4 +351,3 @@ fn handle_delete_response(
         }
     }
 }
-

@@ -69,13 +69,11 @@ impl Scheduler {
         let cancel_child = cancel_token.child_token();
         let handle = tokio::spawn(async move {
             fire_callback(&client, &alarm_clone, cancel_child, db.clone()).await;
-            if is_once {
-                if let Err(e) = db.update_status(&alarm_clone.id, "completed") {
-                    error!(
-                        "Failed to update status for alarm {}: {}",
-                        alarm_clone.id, e
-                    );
-                }
+            if is_once && let Err(e) = db.update_status(&alarm_clone.id, "completed") {
+                error!(
+                    "Failed to update status for alarm {}: {}",
+                    alarm_clone.id, e
+                );
             }
         });
         self.active_callbacks

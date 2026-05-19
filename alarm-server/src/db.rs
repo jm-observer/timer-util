@@ -293,12 +293,12 @@ mod tests {
     #[test]
     fn test_initialize() {
         let db = Database::new(":memory:").unwrap();
-        db.initialize();
+        db.initialize().unwrap();
     }
     #[test]
     fn test_insert_and_get() {
         let db = Database::new(":memory:").unwrap();
-        db.initialize();
+        db.initialize().unwrap();
         let rec = AlarmRecord {
             id: "test-id".to_string(),
             name: "test".to_string(),
@@ -318,7 +318,7 @@ mod tests {
     #[test]
     fn test_list_and_filter() {
         let db = Database::new(":memory:").unwrap();
-        db.initialize();
+        db.initialize().unwrap();
         let rec1 = AlarmRecord {
             id: "id1".to_string(),
             name: "a".to_string(),

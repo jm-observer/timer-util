@@ -29,10 +29,8 @@ impl<'a> Iterator for TimerIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let next = self.conf.next_with_time(self.current);
-        if let Some(end) = self.end {
-            if next > end {
-                return None;
-            }
+        if self.end.is_some_and(|end| next > end) {
+            return None;
         }
         self.current = next;
         Some(next)

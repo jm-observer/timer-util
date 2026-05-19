@@ -73,21 +73,17 @@ fn recover_expired_alarms(db: &Database) {
     };
     let now = chrono::Local::now().naive_local();
     for alarm in active {
-        if alarm.alarm_type == "once" {
-            if let Some(at_str) = alarm.once_at {
-                if let Ok(at) = chrono::NaiveDateTime::parse_from_str(&at_str, "%Y-%m-%dT%H:%M:%S")
-                {
-                    if at <= now {
-                        if let Err(e) = db.update_status(&alarm.id, "completed") {
-                            log::error!(
-                                "Failed to mark expired alarm {} as completed: {}",
-                                alarm.id,
-                                e
-                            );
-                        }
-                    }
-                }
-            }
+        if alarm.alarm_type == "once"
+            && let Some(at_str) = alarm.once_at
+            && let Ok(at) = chrono::NaiveDateTime::parse_from_str(&at_str, "%Y-%m-%dT%H:%M:%S")
+            && at <= now
+            && let Err(e) = db.update_status(&alarm.id, "completed")
+        {
+            log::error!(
+                "Failed to mark expired alarm {} as completed: {}",
+                alarm.id,
+                e
+            );
         }
     }
 }
