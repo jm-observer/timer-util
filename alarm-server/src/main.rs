@@ -116,7 +116,11 @@ async fn run_update(force: bool) -> std::io::Result<()> {
 
     match result {
         Ok(UpdateOutcome::UpToDate { current, latest }) => {
-            log::info!("Already up to date (current {}, latest {})", current, latest);
+            log::info!(
+                "Already up to date (current {}, latest {})",
+                current,
+                latest
+            );
             Ok(())
         }
         Ok(UpdateOutcome::Updated { from, to, bins }) => {
