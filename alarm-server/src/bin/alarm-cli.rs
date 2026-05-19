@@ -6,12 +6,10 @@ use log::LevelFilter::Info;
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use serde_json::Value;
-use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 const APP_NAME: &str = "alarm-server";
 const CONFIG_FILENAME: &str = "config.toml";
-const GITHUB_REPO: &str = "jm-observer/timer-util";
 
 #[derive(Debug, Deserialize, Default)]
 struct TomlConfig {
@@ -75,6 +73,11 @@ enum Commands {
     },
     /// Get detailed information about a specific alarm by its UUID
     Get {
+        /// Alarm UUID (e.g. 550e8400-e29b-41d4-a716-446655440000)
+        id: String,
+    },
+    /// Cancel an alarm by its UUID. The alarm is unscheduled and its record is removed.
+    Cancel {
         /// Alarm UUID (e.g. 550e8400-e29b-41d4-a716-446655440000)
         id: String,
     },
@@ -234,12 +237,54 @@ fn main() -> ExitCode {
                 .send();
             handle_response(resp)
         }
-        Commands::Update { force } => self_update(force),
+        Commands::Cancel { id } => {
+            let resp = client
+                .delete(format!("{}/api/alarms/{}", server_url, id))
+                .send();
+            handle_delete_response(resp, &id)
+        }
+        Commands::Update { force } => {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            match rt.block_on(
+                custom_utils::updater::UpdateConfig::new(
+                    "jm-observer",
+                    "timer-util",
+                    env!("CARGO_PKG_VERSION"),
+                )
+                .bin_name("alarm-cli")
+                .extra_bins(["alarm-server"])
+                .force(force)
+                .execute(),
+            ) {
+                Ok(outcome) => {
+                    println!("{:?}", outcome);
+                    Ok(())
+                }
+                Err(e) => {
+                    eprintln!("Update failed: {}", e);
+                    Err(())
+                }
+            }
+        }
         Commands::Install {
             workspace,
             user,
             dry_run,
-        } => install_systemd(&workspace, &user, dry_run),
+        } => {
+            let svc = custom_utils::updater::ServiceConfig::new("alarm-server")
+                .description("Alarm Server - Recurring alarm scheduler with HTTP callbacks")
+                .exec_args("-w {workspace}")
+                .binaries(["alarm-server", "alarm-cli"])
+                .user(&user)
+                .workspace(&workspace);
+
+            if dry_run {
+                println!("{}", svc.generate_unit());
+                Ok(())
+            } else {
+                svc.install().map_err(|e| eprintln!("Install failed: {}", e))
+            }
+        }
     };
 
     if result.is_ok() {
@@ -279,245 +324,27 @@ fn handle_response(resp: Result<reqwest::blocking::Response, reqwest::Error>) ->
     }
 }
 
-fn current_target() -> &'static str {
-    if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
-        "x86_64-pc-windows-msvc"
-    } else if cfg!(target_os = "linux") && cfg!(target_arch = "aarch64") {
-        "aarch64-unknown-linux-gnu"
-    } else if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
-        "x86_64-unknown-linux-gnu"
-    } else {
-        "unknown"
-    }
-}
-
-fn self_update(force: bool) -> Result<(), ()> {
-    let current_version = env!("CARGO_PKG_VERSION");
-    let target = current_target();
-    if target == "unknown" {
-        eprintln!("Unsupported platform for self-update");
-        return Err(());
-    }
-
-    let client = Client::builder()
-        .user_agent("alarm-cli")
-        .build()
-        .map_err(|e| eprintln!("Failed to create HTTP client: {}", e))?;
-
-    println!("Checking for updates...");
-    let resp = client
-        .get(format!(
-            "https://api.github.com/repos/{}/releases/latest",
-            GITHUB_REPO
-        ))
-        .send()
-        .map_err(|e| eprintln!("Failed to check for updates: {}", e))?;
-
-    if !resp.status().is_success() {
-        eprintln!("GitHub API error: HTTP {}", resp.status());
-        return Err(());
-    }
-
-    let release: Value = resp
-        .json()
-        .map_err(|e| eprintln!("Failed to parse release info: {}", e))?;
-
-    let tag = release["tag_name"]
-        .as_str()
-        .ok_or_else(|| eprintln!("No tag_name in release"))?;
-    let latest_version = tag.strip_prefix('v').unwrap_or(tag);
-
-    if latest_version == current_version && !force {
-        println!("Already up to date (v{})", current_version);
-        return Ok(());
-    }
-
-    println!(
-        "Current: v{}, Latest: v{}",
-        current_version, latest_version
-    );
-
-    let assets = release["assets"]
-        .as_array()
-        .ok_or_else(|| eprintln!("No assets in release"))?;
-
-    let current_exe =
-        std::env::current_exe().map_err(|e| eprintln!("Cannot determine current exe: {}", e))?;
-    let install_dir = current_exe.parent().unwrap();
-
-    let ext = if cfg!(windows) { ".exe" } else { "" };
-
-    for bin_name in &["alarm-cli", "alarm-server"] {
-        let asset_name = format!("{}-{}{}", bin_name, target, ext);
-        let asset = assets
-            .iter()
-            .find(|a| a["name"].as_str() == Some(&asset_name));
-
-        match asset {
-            Some(asset) => {
-                let download_url = asset["browser_download_url"]
-                    .as_str()
-                    .ok_or_else(|| eprintln!("No download URL for {}", asset_name))?;
-
-                println!("Downloading {}...", asset_name);
-                let data = client
-                    .get(download_url)
-                    .send()
-                    .and_then(|r| r.bytes())
-                    .map_err(|e| eprintln!("Failed to download {}: {}", asset_name, e))?;
-
-                let dest = install_dir.join(format!("{}{}", bin_name, ext));
-                replace_binary(&dest, &data)
-                    .map_err(|e| eprintln!("Failed to install {}: {}", bin_name, e))?;
-                println!("Updated: {}", dest.display());
-            }
-            None => {
-                println!("Asset {} not found in release, skipping", asset_name);
+fn handle_delete_response(
+    resp: Result<reqwest::blocking::Response, reqwest::Error>,
+    id: &str,
+) -> Result<(), ()> {
+    match resp {
+        Ok(r) => {
+            if r.status().is_success() {
+                println!("Alarm {} cancelled", id);
+                Ok(())
+            } else {
+                eprintln!("Error: HTTP {}", r.status());
+                if let Ok(text) = r.text() {
+                    eprintln!("Response body: {}", text);
+                }
+                Err(())
             }
         }
+        Err(e) => {
+            eprintln!("Failed to send request: {}", e);
+            Err(())
+        }
     }
-
-    println!("Update complete!");
-    Ok(())
 }
 
-fn replace_binary(dest: &Path, data: &[u8]) -> std::io::Result<()> {
-    if cfg!(windows) {
-        let backup = dest.with_extension("old.exe");
-        if dest.exists() {
-            let _ = std::fs::remove_file(&backup);
-            std::fs::rename(dest, &backup)?;
-        }
-        std::fs::write(dest, data)?;
-    } else {
-        let tmp = dest.with_extension("tmp");
-        std::fs::write(&tmp, data)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))?;
-        }
-        std::fs::rename(&tmp, dest)?;
-    }
-    Ok(())
-}
-
-fn generate_systemd_unit(workspace: &str, user: &str) -> String {
-    format!(
-        r#"[Unit]
-Description=Alarm Server - Recurring alarm scheduler with HTTP callbacks
-After=network.target
-
-[Service]
-Type=simple
-User={user}
-Group={user}
-ExecStart=/usr/local/bin/alarm-server -w {workspace}
-Restart=on-failure
-RestartSec=5
-WorkingDirectory={workspace}
-
-[Install]
-WantedBy=multi-user.target
-"#,
-        user = user,
-        workspace = workspace,
-    )
-}
-
-fn install_systemd(workspace: &str, user: &str, dry_run: bool) -> Result<(), ()> {
-    if cfg!(not(target_os = "linux")) {
-        eprintln!("The install command is only supported on Linux");
-        return Err(());
-    }
-
-    let unit_content = generate_systemd_unit(workspace, user);
-
-    if dry_run {
-        println!("{}", unit_content);
-        return Ok(());
-    }
-
-    // Check root
-    #[cfg(unix)]
-    {
-        if unsafe { libc::geteuid() } != 0 {
-            eprintln!("Error: install requires root privileges. Run with sudo.");
-            return Err(());
-        }
-    }
-
-    let current_exe =
-        std::env::current_exe().map_err(|e| eprintln!("Cannot determine current exe: {}", e))?;
-    let src_dir = current_exe.parent().unwrap();
-
-    // Copy binaries
-    let bins = ["alarm-server", "alarm-cli"];
-    for bin in &bins {
-        let src = src_dir.join(bin);
-        let dest = PathBuf::from(format!("/usr/local/bin/{}", bin));
-        if src.exists() {
-            std::fs::copy(&src, &dest)
-                .map_err(|e| eprintln!("Failed to copy {} to /usr/local/bin: {}", bin, e))?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755));
-            }
-            println!("Installed: {}", dest.display());
-        } else if *bin == "alarm-server" {
-            eprintln!(
-                "Error: {} not found in {}",
-                bin,
-                src_dir.display()
-            );
-            return Err(());
-        }
-    }
-
-    // Create user if not exists
-    let user_check = std::process::Command::new("id")
-        .arg(user)
-        .output();
-    if let Ok(output) = user_check {
-        if !output.status.success() {
-            println!("Creating system user: {}", user);
-            let status = std::process::Command::new("useradd")
-                .args(["--system", "--no-create-home", "--shell", "/usr/sbin/nologin", user])
-                .status()
-                .map_err(|e| eprintln!("Failed to create user: {}", e))?;
-            if !status.success() {
-                eprintln!("Failed to create system user '{}'", user);
-                return Err(());
-            }
-        }
-    }
-
-    // Create workspace directory
-    std::fs::create_dir_all(workspace)
-        .map_err(|e| eprintln!("Failed to create workspace {}: {}", workspace, e))?;
-
-    let _ = std::process::Command::new("chown")
-        .args([&format!("{}:{}", user, user), workspace])
-        .status();
-
-    // Write systemd unit
-    let unit_path = "/etc/systemd/system/alarm-server.service";
-    std::fs::write(unit_path, &unit_content)
-        .map_err(|e| eprintln!("Failed to write {}: {}", unit_path, e))?;
-    println!("Installed: {}", unit_path);
-
-    // Reload systemd and enable
-    let _ = std::process::Command::new("systemctl")
-        .args(["daemon-reload"])
-        .status();
-    let _ = std::process::Command::new("systemctl")
-        .args(["enable", "alarm-server.service"])
-        .status();
-
-    println!("\nInstallation complete!");
-    println!("  Start:   sudo systemctl start alarm-server");
-    println!("  Status:  sudo systemctl status alarm-server");
-    println!("  Logs:    sudo journalctl -u alarm-server -f");
-    Ok(())
-}
