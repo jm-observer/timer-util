@@ -13,12 +13,13 @@ struct TomlConfig {
 
 pub struct Config {
     pub port: u16,
-    pub db_path: PathBuf,
-    pub workspace: PathBuf,
 }
 
 impl Config {
-    pub fn load(arg_workspace: &Option<String>) -> anyhow::Result<Self> {
+    /// Loads configuration from `<workspace>/config.toml` and returns the
+    /// parsed config together with the database path. The database always
+    /// lives in the same folder as the config file.
+    pub fn load(arg_workspace: &Option<String>) -> anyhow::Result<(Self, PathBuf)> {
         let workspace = custom_utils::args::workspace(arg_workspace, APP_NAME)?;
         std::fs::create_dir_all(&workspace)?;
 
@@ -28,11 +29,7 @@ impl Config {
         let port = toml_cfg.port.unwrap_or(DEFAULT_PORT);
         let db_path = workspace.join(DB_FILENAME);
 
-        Ok(Self {
-            port,
-            db_path,
-            workspace,
-        })
+        Ok((Self { port }, db_path))
     }
 
     fn load_toml(path: &Path) -> TomlConfig {

@@ -86,26 +86,26 @@ enum Commands {
         /// Alarm UUID (e.g. 550e8400-e29b-41d4-a716-446655440000)
         id: String,
     },
-    /// Update alarm-cli and alarm-server binaries to the latest GitHub release.
-    /// Downloads from https://github.com/jm-observer/timer-util/releases
-    Update {
-        /// Force update even if already on the latest version
-        #[arg(long)]
-        force: bool,
-    },
-    /// Install alarm-server as a systemd service (Linux only, requires root).
-    /// Copies binaries to /usr/local/bin, creates a systemd unit, and enables the service.
-    Install {
-        /// Workspace directory for the service (default: /etc/alarm-server)
-        #[arg(long, default_value = "/etc/alarm-server")]
-        workspace: String,
-        /// System user to run the service as (created if missing)
-        #[arg(long, default_value = "alarm-server")]
-        user: String,
-        /// Just print the generated systemd unit file without installing
-        #[arg(long)]
-        dry_run: bool,
-    },
+    // /// Update alarm-cli and alarm-server binaries to the latest GitHub release.
+    // /// Downloads from https://github.com/jm-observer/timer-util/releases
+    // Update {
+    //     /// Force update even if already on the latest version
+    //     #[arg(long)]
+    //     force: bool,
+    // },
+    // /// Install alarm-server as a systemd service (Linux only, requires root).
+    // /// Copies binaries to /usr/local/bin, creates a systemd unit, and enables the service.
+    // Install {
+    //     /// Workspace directory for the service (default: /etc/alarm-server)
+    //     #[arg(long, default_value = "/etc/alarm-server")]
+    //     workspace: String,
+    //     /// System user to run the service as (created if missing)
+    //     #[arg(long, default_value = "alarm-server")]
+    //     user: String,
+    //     /// Just print the generated systemd unit file without installing
+    //     #[arg(long)]
+    //     dry_run: bool,
+    // },
 }
 
 fn validate_status(s: &str) -> Result<String, String> {
@@ -151,18 +151,11 @@ fn parse_callback_body(raw: Option<String>) -> Result<Option<Value>, String> {
 }
 
 fn main() -> ExitCode {
-    let log_dir = custom_utils::args::get_user_home()
-        .expect("Failed to resolve home directory")
-        .join(".config")
-        .join(APP_NAME);
-    let _ = std::fs::create_dir_all(&log_dir);
-    let _ = custom_utils::logger::logger_feature_with_path(
+    let _ = custom_utils::logger::logger_feature(
         "alarm-cli",
         "info,alarm-server=debug,alarm-client=debug,timer-util=debug",
         Info,
-        log_dir.clone(),
         false,
-        log_dir,
     )
     .build();
 
@@ -253,49 +246,6 @@ fn main() -> ExitCode {
                 .delete(format!("{}/api/alarms/{}", server_url, id))
                 .send();
             handle_delete_response(resp, &id)
-        }
-        Commands::Update { force } => {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            match rt.block_on(
-                custom_utils::updater::UpdateConfig::new(
-                    "jm-observer",
-                    "timer-util",
-                    env!("CARGO_PKG_VERSION"),
-                )
-                .bin_name("alarm-cli")
-                .extra_bins(["alarm-server"])
-                .force(force)
-                .execute(),
-            ) {
-                Ok(outcome) => {
-                    println!("{:?}", outcome);
-                    Ok(())
-                }
-                Err(e) => {
-                    eprintln!("Update failed: {}", e);
-                    Err(())
-                }
-            }
-        }
-        Commands::Install {
-            workspace,
-            user,
-            dry_run,
-        } => {
-            let svc = custom_utils::updater::ServiceConfig::new("alarm-server")
-                .description("Alarm Server - Recurring alarm scheduler with HTTP callbacks")
-                .exec_args("-w {workspace}")
-                .binaries(["alarm-server", "alarm-cli"])
-                .user(&user)
-                .workspace(&workspace);
-
-            if dry_run {
-                println!("{}", svc.generate_unit());
-                Ok(())
-            } else {
-                svc.install()
-                    .map_err(|e| eprintln!("Install failed: {}", e))
-            }
         }
     };
 
