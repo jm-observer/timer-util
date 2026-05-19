@@ -151,11 +151,18 @@ fn parse_callback_body(raw: Option<String>) -> Result<Option<Value>, String> {
 }
 
 fn main() -> ExitCode {
-    let _ = custom_utils::logger::logger_feature(
+    let log_dir = custom_utils::args::get_user_home()
+        .expect("Failed to resolve home directory")
+        .join(".config")
+        .join(APP_NAME);
+    let _ = std::fs::create_dir_all(&log_dir);
+    let _ = custom_utils::logger::logger_feature_with_path(
         "alarm-cli",
         "info,alarm-server=debug,alarm-client=debug,timer-util=debug",
         Info,
+        log_dir.clone(),
         false,
+        log_dir,
     )
     .build();
 
