@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 const DEFAULT_PORT: u16 = 8080;
 const DB_FILENAME: &str = "alarms.db";
 const CONFIG_FILENAME: &str = "config.toml";
-const APP_NAME: &str = "alarm-server";
 
 #[derive(Debug, Deserialize, Default)]
 struct TomlConfig {
@@ -18,10 +17,10 @@ pub struct Config {
 impl Config {
     /// Loads configuration from `<workspace>/config.toml` and returns the
     /// parsed config together with the database path. The database always
-    /// lives in the same folder as the config file.
-    pub fn load(arg_workspace: &Option<String>) -> anyhow::Result<(Self, PathBuf)> {
-        let workspace = custom_utils::args::workspace(arg_workspace, APP_NAME)?;
-        std::fs::create_dir_all(&workspace)?;
+    /// lives in the same folder as the config file. The workspace is the
+    /// single source of truth resolved by `LinuxService::workspace()`.
+    pub fn load(workspace: &Path) -> anyhow::Result<(Self, PathBuf)> {
+        std::fs::create_dir_all(workspace)?;
 
         let config_path = workspace.join(CONFIG_FILENAME);
         let toml_cfg = Self::load_toml(&config_path);
