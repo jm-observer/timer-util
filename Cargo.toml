@@ -1,7 +1,7 @@
 [workspace]
 members = [".", "alarm-server"]
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 description = "a simple tool to compute time: easy to config, and easy to use."
 license-file = "LICENSE"
