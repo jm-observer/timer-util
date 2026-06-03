@@ -25,7 +25,8 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 log = "0.4"
 tokio-util = "0.7"
-custom-utils = { version = "0.14.0", default-features = false, features = ["updater", "logger"] }
+# 临时 path 依赖（trace-hub DESIGN §7.6 选项 B）以启用本地 trace feature；发布前按选项 A 改回版本依赖。
+custom-utils = { path = "../../custom-utils", default-features = false, features = ["updater", "logger", "trace"] }
 toml = "0.8"
 anyhow = "1"
 

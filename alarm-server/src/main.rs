@@ -33,15 +33,10 @@ enum AppCmd {
 }
 
 fn service() -> LinuxService {
-    LinuxService::new(
-        APP_NAME,
-        REPO_OWNER,
-        REPO_NAME,
-        env!("CARGO_PKG_VERSION"),
-    )
-    .description("Alarm Server - recurring/one-time alarm scheduler")
-    .extra_bins(["alarm-cli"])
-    .watchdog_sec(30)
+    LinuxService::new(APP_NAME, REPO_OWNER, REPO_NAME, env!("CARGO_PKG_VERSION"))
+        .description("Alarm Server - recurring/one-time alarm scheduler")
+        .extra_bins(["alarm-cli"])
+        .watchdog_sec(30)
 }
 
 /// Our own usage block; spliced ahead of the library's deploy usage on `--help`.
@@ -102,8 +97,20 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
+/// 启用全生命周期追踪（仅当设置 `TRACE_HUB_ENDPOINT` 时）；未设则零影响。
+fn init_trace() {
+    if let Ok(endpoint) = std::env::var("TRACE_HUB_ENDPOINT") {
+        custom_utils::trace::init(custom_utils::trace::TraceConfig::new(
+            endpoint,
+            "alarm-server",
+        ));
+        log::info!("trace enabled → trace-hub");
+    }
+}
+
 async fn run_server(workspace: PathBuf) -> anyhow::Result<()> {
     log::info!("alarm-server starting...");
+    init_trace();
 
     let (config, db_path) = Config::load(&workspace).expect("Failed to load configuration");
     log::info!("database: {}", db_path.display());
