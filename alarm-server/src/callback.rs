@@ -51,26 +51,28 @@ fn truncate_body(s: String, limit: usize) -> (String, bool) {
 
 /// 从 alarm 的 callback_body.metadata.traceparent 解析出本次触发的 trace 上下文。
 ///
-/// once：续用同 trace_id（`continued`），无 link；
-/// cron：每次触发新起 trace_id + `SpanLink` 回指设置时的 span（避免一棵树无限膨胀）。
+/// **两种类型都用 `root_with_id` + `SpanLink`**——不再用 `continued`：
+/// - alarm_fire 在 alarm 设置 N 秒/分钟/小时**之后**才发生，跟 setup 时的 tool_call
+///   没时间重叠。若 parent_span_id=setup_span 会导致 UI 上"父节点 1ms 结束、子节点
+///   N 秒后出现"的时间倒挂；
+/// - 改成 alarm_fire 自身是该 trace 的另一个 root（同 trace_id 但 parent=None），
+///   通过 SpanLink 引回 setup 时的 span（trace-hub UI 画虚线箭头），既保留因果
+///   关联，又避免时间线错乱。
+/// - 同 trace_id 还能让 setup 端的 trace 在搜索时把 alarm_fire 也带出来。
 /// 无 traceparent 时返回 None（不记录，避免孤立 trace）。
 fn fire_trace_ctx(alarm: &AlarmRecord) -> Option<(TraceContext, Option<SpanLink>)> {
     let body = alarm.callback_body.as_ref()?;
     let v: serde_json::Value = serde_json::from_str(body).ok()?;
     let tp = v.get("metadata")?.get("traceparent")?.as_str()?;
     let remote = TraceContext::from_traceparent(tp)?;
-    if alarm.alarm_type == "cron" {
-        let link = SpanLink {
-            trace_id: remote.trace_id.clone(),
-            span_id: remote.span_id.clone(),
-        };
-        Some((TraceContext::root(), Some(link)))
-    } else {
-        Some((
-            TraceContext::continued(remote.trace_id, remote.span_id),
-            None,
-        ))
-    }
+    let link = SpanLink {
+        trace_id: remote.trace_id.clone(),
+        span_id: remote.span_id.clone(),
+    };
+    // 用 root_with_id 复用同 trace_id；span_id 是新生成的（跟 setup 的 span 不冲突）；
+    // parent_span_id=None 让 alarm_fire 当 trace 顶层节点，UI 不嵌套到 setup 之下。
+    let ctx = TraceContext::root_with_id(remote.trace_id);
+    Some((ctx, Some(link)))
 }
 
 const MAX_ATTEMPTS: i32 = 20;

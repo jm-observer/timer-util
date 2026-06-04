@@ -169,6 +169,33 @@ fn parse_callback_body(raw: Option<String>) -> Result<Option<Value>, String> {
     .transpose()
 }
 
+/// 把宿主（zero）传下来的 `ZERO_SESSION_ID` env 注入 callback_body.metadata.session_id。
+///
+/// 设计意图：alarm-server 持久化 callback_body；fire 时把该字段透传给 zero gateway。
+/// zero 收到回调时**直接 forward 到原 session**，而不是为每条回调建一个 ghost
+/// session 中断 LLM 上下文。env 未设则不动 callback_body。
+/// 已显式写入 `metadata.session_id` 的调用方 → 保留原值，尊重显式覆盖。
+fn enrich_callback_body_with_session_id(body: Option<Value>) -> Option<Value> {
+    let sid = match std::env::var("ZERO_SESSION_ID") {
+        Ok(s) if !s.is_empty() => s,
+        _ => return body,
+    };
+    let mut v = body.unwrap_or_else(|| serde_json::json!({}));
+    let Some(obj) = v.as_object_mut() else {
+        return Some(v);
+    };
+    let metadata = obj
+        .entry("metadata".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    let Some(meta_obj) = metadata.as_object_mut() else {
+        return Some(v);
+    };
+    meta_obj
+        .entry("session_id".to_string())
+        .or_insert_with(|| Value::String(sid));
+    Some(v)
+}
+
 fn main() -> ExitCode {
     let _ = custom_utils::logger::logger_feature(
         "alarm-cli",
@@ -193,7 +220,7 @@ fn main() -> ExitCode {
                 eprintln!("Invalid --once-at: {}", e);
                 return ExitCode::FAILURE;
             }
-            let callback_body = match parse_callback_body(callback_body) {
+            let callback_body = match parse_callback_body(callback_body).map(enrich_callback_body_with_session_id) {
                 Ok(body) => body,
                 Err(e) => {
                     eprintln!("{}", e);
@@ -219,7 +246,7 @@ fn main() -> ExitCode {
             callback_url,
             callback_body,
         } => {
-            let callback_body = match parse_callback_body(callback_body) {
+            let callback_body = match parse_callback_body(callback_body).map(enrich_callback_body_with_session_id) {
                 Ok(body) => body,
                 Err(e) => {
                     eprintln!("{}", e);

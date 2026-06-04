@@ -29,7 +29,7 @@ tokio-util = "0.7"
 # 新 task-local；发布前按选项 A 改回 crates.io 版本依赖。改 git rev 是为了
 # Docker 交叉编译时容器只需挂当前仓——记入用户级 memory：兄弟仓 path 必须先
 # commit+push 改 rev。
-custom-utils = { git = "https://github.com/jm-observer/custom-utils.git", rev = "cc6885fc1fb852bf8f76150898cb6c71deb291a1", default-features = false, features = ["updater", "logger", "trace"] }
+custom-utils = { git = "https://github.com/jm-observer/custom-utils.git", rev = "014b86e6fa718ea7a0c1c3e288c7d4d27763ca22", default-features = false, features = ["updater", "logger", "trace"] }
 toml = "0.8"
 anyhow = "1"
 
