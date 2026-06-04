@@ -219,7 +219,11 @@ pub async fn create_alarm(
                 "status": alarm.status,
             }),
             request_body: req_body_pretty,
-            response_body: None,
+            // response_body：alarm-server 实际返回给 alarm-cli 的 AlarmResponse
+            // （含分配的 alarm_id、解析后的 next_fire_at、status），trace-hub 详情面板
+            // 直接看「请求 / 响应」两栏，闹钟设置的入参 + 服务端给出的下次触发时间都
+            // 在一个 span 里。
+            response_body: serde_json::to_string_pretty(&resp).ok(),
             body_truncated: false,
             links: Vec::new(),
         });
