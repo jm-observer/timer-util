@@ -10,11 +10,12 @@ use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
 /// Send the HTTP POST request for the alarm callback.
+/// 返回 (HTTP status, 响应体文本)；响应体读不到时为空串。
 async fn send_request(
     client: &Client,
     alarm: &AlarmRecord,
     fire_ctx: Option<&TraceContext>,
-) -> Result<reqwest::Response, reqwest::Error> {
+) -> Result<(u16, String), reqwest::Error> {
     let mut req = client.post(&alarm.callback_url);
     req = req.header("Content-Type", "application/json");
     req = req.header("X-Alarm-Id", &alarm.id);
@@ -29,7 +30,23 @@ async fn send_request(
         .clone()
         .unwrap_or_else(|| "null".to_string());
     let resp = req.body(body).send().await?;
-    Ok(resp)
+    let status = resp.status().as_u16();
+    let text = resp.text().await.unwrap_or_default();
+    Ok((status, text))
+}
+
+/// 4KB 截断，避免 trace 节点被巨型响应撑爆。
+fn truncate_body(s: String, limit: usize) -> (String, bool) {
+    if s.len() <= limit {
+        (s, false)
+    } else {
+        // 按字符边界切，防止 UTF-8 中间裁。
+        let mut end = limit;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        (s[..end].to_string(), true)
+    }
 }
 
 /// 从 alarm 的 callback_body.metadata.traceparent 解析出本次触发的 trace 上下文。
@@ -89,6 +106,11 @@ pub async fn fire_callback(
     let fire_ctx = traced.as_ref().map(|(c, _)| c.clone());
     let mut outcome_ok = false;
     let mut cancelled = false;
+    // 给 span 记录最后一次回调的状态/响应/错误。
+    let mut last_status: Option<u16> = None;
+    let mut last_response_body: Option<String> = None;
+    let mut last_response_truncated = false;
+    let mut last_error: Option<String> = None;
 
     loop {
         let now_str = || {
@@ -98,62 +120,66 @@ pub async fn fire_callback(
                 .to_string()
         };
         match send_request(client, alarm, fire_ctx.as_ref()).await {
-            Ok(resp) if resp.status().is_success() => {
-                info!(
-                    "Alarm '{}' callback succeeded on attempt {}",
-                    alarm_id, attempt
-                );
-                log_result(
-                    &db,
-                    &crate::models::NotificationLog {
-                        id: 0,
-                        alarm_id: alarm_id.clone(),
-                        alarm_name: alarm_name.clone(),
-                        callback_url: callback_url.clone(),
-                        status: "success".to_string(),
-                        http_status: Some(resp.status().as_u16()),
-                        error_message: None,
-                        attempt,
-                        triggered_at: triggered_at.clone(),
-                        completed_at: now_str(),
-                    },
-                );
-                outcome_ok = true;
-                break;
-            }
-            Ok(resp) => {
-                warn!(
-                    "Alarm '{}' callback got status {} (attempt {})",
-                    alarm_id,
-                    resp.status(),
-                    attempt
-                );
-                let is_last = attempt >= MAX_ATTEMPTS;
-                log_result(
-                    &db,
-                    &crate::models::NotificationLog {
-                        id: 0,
-                        alarm_id: alarm_id.clone(),
-                        alarm_name: alarm_name.clone(),
-                        callback_url: callback_url.clone(),
-                        status: if is_last {
-                            "failed".to_string()
-                        } else {
-                            "retrying".to_string()
-                        },
-                        http_status: Some(resp.status().as_u16()),
-                        error_message: None,
-                        attempt,
-                        triggered_at: triggered_at.clone(),
-                        completed_at: now_str(),
-                    },
-                );
-                if is_last {
-                    error!(
-                        "Alarm '{}' callback gave up after {} attempts",
-                        alarm_id, MAX_ATTEMPTS
+            Ok((status_code, body_text)) => {
+                let (body_capped, truncated) = truncate_body(body_text, 4096);
+                last_status = Some(status_code);
+                last_response_body = Some(body_capped);
+                last_response_truncated = truncated;
+                last_error = None;
+                if (200..300).contains(&status_code) {
+                    info!(
+                        "Alarm '{}' callback succeeded on attempt {}",
+                        alarm_id, attempt
                     );
+                    log_result(
+                        &db,
+                        &crate::models::NotificationLog {
+                            id: 0,
+                            alarm_id: alarm_id.clone(),
+                            alarm_name: alarm_name.clone(),
+                            callback_url: callback_url.clone(),
+                            status: "success".to_string(),
+                            http_status: Some(status_code),
+                            error_message: None,
+                            attempt,
+                            triggered_at: triggered_at.clone(),
+                            completed_at: now_str(),
+                        },
+                    );
+                    outcome_ok = true;
                     break;
+                } else {
+                    warn!(
+                        "Alarm '{}' callback got status {} (attempt {})",
+                        alarm_id, status_code, attempt
+                    );
+                    let is_last = attempt >= MAX_ATTEMPTS;
+                    log_result(
+                        &db,
+                        &crate::models::NotificationLog {
+                            id: 0,
+                            alarm_id: alarm_id.clone(),
+                            alarm_name: alarm_name.clone(),
+                            callback_url: callback_url.clone(),
+                            status: if is_last {
+                                "failed".to_string()
+                            } else {
+                                "retrying".to_string()
+                            },
+                            http_status: Some(status_code),
+                            error_message: None,
+                            attempt,
+                            triggered_at: triggered_at.clone(),
+                            completed_at: now_str(),
+                        },
+                    );
+                    if is_last {
+                        error!(
+                            "Alarm '{}' callback gave up after {} attempts",
+                            alarm_id, MAX_ATTEMPTS
+                        );
+                        break;
+                    }
                 }
             }
             Err(e) => {
@@ -161,6 +187,8 @@ pub async fn fire_callback(
                     "Alarm '{}' callback error (attempt {}): {}",
                     alarm_id, attempt, e
                 );
+                last_status = None;
+                last_error = Some(e.to_string());
                 let is_last = attempt >= MAX_ATTEMPTS;
                 log_result(
                     &db,
@@ -221,8 +249,24 @@ pub async fn fire_callback(
         let status = if outcome_ok {
             SpanStatus::Ok
         } else {
-            SpanStatus::Error("callback failed".to_string())
+            let why = last_error
+                .clone()
+                .or_else(|| last_status.map(|c| format!("HTTP {}", c)))
+                .unwrap_or_else(|| "callback failed".to_string());
+            SpanStatus::Error(why)
         };
+        // schedule：cron 看表达式、once 看时间，summary 一行就知道是什么闹钟在响。
+        let schedule = alarm
+            .cron_expr
+            .clone()
+            .or_else(|| alarm.once_at.clone())
+            .unwrap_or_default();
+        // callback_body 解析后展开到 detail，便于直接看「闹钟内容」。
+        let callback_body_json: serde_json::Value = alarm
+            .callback_body
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or(serde_json::Value::Null);
         trace::record_span(SpanRecord {
             trace_id: ctx.trace_id,
             span_id: ctx.span_id,
@@ -233,11 +277,38 @@ pub async fn fire_callback(
             start_ms: fire_start,
             end_ms: trace::now_ms(),
             status,
-            summary: serde_json::json!({ "alarm_id": alarm_id, "name": alarm_name, "attempts": attempt }),
-            detail: serde_json::json!({ "callback_url": callback_url }),
-            request_body: None,
-            response_body: None,
-            body_truncated: false,
+            summary: serde_json::json!({
+                "alarm_id": alarm_id,
+                "name": alarm_name,
+                "alarm_type": alarm.alarm_type,
+                "schedule": schedule,
+                "attempts": attempt,
+                "http_status": last_status,
+                "callback_url": callback_url,
+            }),
+            detail: serde_json::json!({
+                "alarm_id": alarm_id,
+                "name": alarm_name,
+                "alarm_type": alarm.alarm_type,
+                "cron_expr": alarm.cron_expr,
+                "once_at": alarm.once_at,
+                "callback_url": callback_url,
+                "triggered_at": triggered_at,
+                "attempts": attempt,
+                "http_status": last_status,
+                "error": last_error,
+                "callback_body": callback_body_json,
+            }),
+            // request_body：实际 POST 给回调方的 body（即「闹钟内容」原文）。
+            request_body: Some(
+                alarm
+                    .callback_body
+                    .clone()
+                    .unwrap_or_else(|| "null".to_string()),
+            ),
+            // response_body：回调方返回（最多 4KB），点开节点能直接看下游的回包。
+            response_body: last_response_body,
+            body_truncated: last_response_truncated,
             links: link.into_iter().collect(),
         });
     }

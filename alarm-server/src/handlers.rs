@@ -3,8 +3,10 @@ use crate::db::Database;
 use crate::error::AppError;
 use crate::models::{AlarmListResponse, AlarmResponse, CreateAlarmRequest, ListQuery};
 use crate::scheduler::SchedulerCommand;
-use actix_web::{HttpResponse, web};
+use actix_web::{HttpRequest, HttpResponse, web};
 use chrono::{Local, NaiveDateTime};
+use custom_utils::trace::{self, SpanRecord, SpanStatus, extract_traceparent};
+use log::error;
 use uuid::Uuid;
 
 pub fn init_routes(cfg: &mut web::ServiceConfig) {
@@ -30,10 +32,25 @@ pub async fn health(db: web::Data<Database>) -> Result<HttpResponse, AppError> {
 }
 
 pub async fn create_alarm(
+    req: HttpRequest,
     body: web::Json<CreateAlarmRequest>,
     db: web::Data<Database>,
     tx: web::Data<tokio::sync::mpsc::Sender<SchedulerCommand>>,
 ) -> Result<HttpResponse, AppError> {
+    let start_ms = trace::now_ms();
+    // 提取上游（zero 等）注入的 traceparent；缺失则记 error 日志，后续不再上报 alarm_created。
+    let remote_ctx = extract_traceparent(|name| {
+        req.headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+    });
+    if remote_ctx.is_none() {
+        error!(
+            "create_alarm: missing traceparent header from upstream; alarm_created span will not be reported (callback_url={})",
+            body.callback_url
+        );
+    }
     // Validate alarm_type
     let alarm_type = body.alarm_type.as_str();
     if alarm_type != "cron" && alarm_type != "once" {
@@ -98,18 +115,80 @@ pub async fn create_alarm(
         .next_fire_at()
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let resp = AlarmResponse {
-        id: alarm.id,
-        name: alarm.name,
-        alarm_type: alarm.alarm_type,
-        cron_expr: alarm.cron_expr,
-        once_at: alarm.once_at,
-        callback_url: alarm.callback_url,
-        callback_body: alarm.callback_body,
-        status: alarm.status,
-        created_at: alarm.created_at,
-        updated_at: alarm.updated_at,
-        next_fire_at: next,
+        id: alarm.id.clone(),
+        name: alarm.name.clone(),
+        alarm_type: alarm.alarm_type.clone(),
+        cron_expr: alarm.cron_expr.clone(),
+        once_at: alarm.once_at.clone(),
+        callback_url: alarm.callback_url.clone(),
+        callback_body: alarm.callback_body.clone(),
+        status: alarm.status.clone(),
+        created_at: alarm.created_at.clone(),
+        updated_at: alarm.updated_at.clone(),
+        next_fire_at: next.clone(),
     };
+    // 上报「闹钟设置」span（作为上游 span 的子节点，trace_id 复用 → 与后续 alarm_fire 同链路）。
+    if let Some(remote) = remote_ctx {
+        let ctx = remote.child();
+        // 把 callback_body 字符串解析回 JSON，detail 里直接展开可读，比转义字符串好读得多。
+        let callback_body_json: serde_json::Value = alarm
+            .callback_body
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or(serde_json::Value::Null);
+        // schedule：cron 用表达式、once 用时间字符串，前端 summary 一行即可看清。
+        let schedule = alarm
+            .cron_expr
+            .clone()
+            .or_else(|| alarm.once_at.clone())
+            .unwrap_or_default();
+        // request_body：建闹钟入参原文（含上层调用方的全部 callback_body），便于回溯。
+        // CreateAlarmRequest 不带 Serialize，手工拼一份等价 JSON。
+        let req_body_pretty = serde_json::to_string_pretty(&serde_json::json!({
+            "name": body.name,
+            "alarm_type": body.alarm_type,
+            "cron_expr": body.cron_expr,
+            "once_at": body.once_at,
+            "callback_url": body.callback_url,
+            "callback_body": body.callback_body,
+        }))
+        .ok();
+        trace::record_span(SpanRecord {
+            trace_id: ctx.trace_id,
+            span_id: ctx.span_id,
+            parent_span_id: ctx.parent_span_id,
+            service: String::new(),
+            kind: "alarm_created".to_string(),
+            flow_name: Some("闹钟设置".to_string()),
+            start_ms,
+            end_ms: trace::now_ms(),
+            status: SpanStatus::Ok,
+            summary: serde_json::json!({
+                "alarm_id": alarm.id,
+                "name": alarm.name,
+                "alarm_type": alarm.alarm_type,
+                "schedule": schedule,
+                "callback_url": alarm.callback_url,
+                "next_fire_at": next,
+            }),
+            detail: serde_json::json!({
+                "alarm_id": alarm.id,
+                "name": alarm.name,
+                "alarm_type": alarm.alarm_type,
+                "cron_expr": alarm.cron_expr,
+                "once_at": alarm.once_at,
+                "callback_url": alarm.callback_url,
+                "next_fire_at": next,
+                "callback_body": callback_body_json,
+                "created_at": alarm.created_at,
+                "status": alarm.status,
+            }),
+            request_body: req_body_pretty,
+            response_body: None,
+            body_truncated: false,
+            links: Vec::new(),
+        });
+    }
     Ok(HttpResponse::Created().json(resp))
 }
 
