@@ -5,9 +5,39 @@ use crate::models::{AlarmListResponse, AlarmResponse, CreateAlarmRequest, ListQu
 use crate::scheduler::SchedulerCommand;
 use actix_web::{HttpRequest, HttpResponse, web};
 use chrono::{Local, NaiveDateTime};
-use custom_utils::trace::{self, SpanRecord, SpanStatus, extract_traceparent};
+use custom_utils::trace::{self, SpanRecord, SpanStatus, TraceContext, extract_traceparent};
 use log::error;
 use uuid::Uuid;
+
+/// 把 upstream 注入的 traceparent 合并进 `callback_body.metadata.traceparent`。
+///
+/// fire 阶段 [`crate::callback::fire_trace_ctx`] 只看 `callback_body.metadata.traceparent`
+/// 这一个位置。如果上游调用方（如 zero alarm 工具）忘了把头里的 traceparent 抄进
+/// body，本函数把它补上——这样不依赖弱模型行为也能保证 fire 端续接 trace。
+///
+/// 已显式写入 `metadata.traceparent` 的调用方 → 保留原值（don't overwrite，尊重调用方）；
+/// callback_body 是非对象（罕见，如 null/string）→ 保持原样不动，避免破坏现有协议。
+fn merge_traceparent_into_body(
+    body: Option<serde_json::Value>,
+    remote_ctx: Option<&TraceContext>,
+) -> Option<serde_json::Value> {
+    let Some(ctx) = remote_ctx else { return body };
+    let tp = ctx.to_traceparent();
+    let mut v = body.unwrap_or_else(|| serde_json::json!({}));
+    let Some(obj) = v.as_object_mut() else {
+        return Some(v);
+    };
+    let metadata = obj
+        .entry("metadata".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    let Some(meta_obj) = metadata.as_object_mut() else {
+        return Some(v);
+    };
+    meta_obj
+        .entry("traceparent".to_string())
+        .or_insert_with(|| serde_json::Value::String(tp));
+    Some(v)
+}
 
 pub fn init_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(web::resource("/api/health").route(web::get().to(health)))
@@ -82,7 +112,13 @@ pub async fn create_alarm(
     if body.callback_url.trim().is_empty() {
         return Err(AppError::Validation("callback_url cannot be empty".into()));
     }
-    // Build AlarmRecord
+    // 持久化 traceparent 到 callback_body.metadata.traceparent：fire 时
+    // callback.rs::fire_trace_ctx 据此 `continued()` 出本次触发的 trace ctx，
+    // 并通过 callback HTTP 头透传给回调方（zero 的 gateway 入站续接同棵 trace）。
+    // 仅当上游头确实带了 traceparent，且 callback_body 里尚未自行写入时才注入；
+    // 已有则尊重调用方原意。callback_body 非 Object（罕见）时保持原样不动。
+    let enriched_callback_body =
+        merge_traceparent_into_body(body.callback_body.clone(), remote_ctx.as_ref());
     let id = Uuid::new_v4().to_string();
     let name = body.name.clone().unwrap_or_default();
     let alarm = crate::models::AlarmRecord {
@@ -92,8 +128,7 @@ pub async fn create_alarm(
         cron_expr: body.cron_expr.clone(),
         once_at: body.once_at.clone(),
         callback_url: body.callback_url.clone(),
-        callback_body: body
-            .callback_body
+        callback_body: enriched_callback_body
             .as_ref()
             .map(|v| serde_json::to_string(v).unwrap()),
         status: "active".to_string(),

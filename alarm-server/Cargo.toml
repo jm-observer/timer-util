@@ -25,8 +25,11 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 log = "0.4"
 tokio-util = "0.7"
-# 临时 path 依赖（trace-hub DESIGN §7.6 选项 B）以启用本地 trace feature；发布前按选项 A 改回版本依赖。
-custom-utils = { path = "../../custom-utils", default-features = false, features = ["updater", "logger", "trace"] }
+# 临时 git rev 依赖（trace-hub DESIGN §7.6 选项 B）以启用 trace feature 中的
+# 新 task-local；发布前按选项 A 改回 crates.io 版本依赖。改 git rev 是为了
+# Docker 交叉编译时容器只需挂当前仓——记入用户级 memory：兄弟仓 path 必须先
+# commit+push 改 rev。
+custom-utils = { git = "https://github.com/jm-observer/custom-utils.git", rev = "cc6885fc1fb852bf8f76150898cb6c71deb291a1", default-features = false, features = ["updater", "logger", "trace"] }
 toml = "0.8"
 anyhow = "1"
 

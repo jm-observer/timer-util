@@ -142,6 +142,25 @@ fn validate_once_at(s: &str) -> Result<(), String> {
         })
 }
 
+/// POST 建闹钟，自动从 `TRACEPARENT` 环境变量取 W3C traceparent 注入请求头。
+///
+/// 闹钟工具通常以子进程被 LLM 宿主（zero 等）调起；宿主在 spawn 时把当前 trace
+/// 上下文塞进 env，本函数据此续接 trace。env 未设则不加头，alarm-server 端
+/// 退化为「无追踪」（详见 handlers.rs 注释）。
+fn post_create_alarm(
+    client: &Client,
+    server_url: &str,
+    body: &serde_json::Map<String, Value>,
+) -> reqwest::Result<reqwest::blocking::Response> {
+    let mut req = client.post(format!("{}/api/alarms", server_url)).json(body);
+    if let Ok(tp) = std::env::var("TRACEPARENT")
+        && !tp.is_empty()
+    {
+        req = req.header("traceparent", tp);
+    }
+    req.send()
+}
+
 fn parse_callback_body(raw: Option<String>) -> Result<Option<Value>, String> {
     raw.map(|body| {
         serde_json::from_str::<Value>(&body)
@@ -191,10 +210,7 @@ fn main() -> ExitCode {
             if let Some(b) = callback_body {
                 map.insert("callback_body".to_string(), b);
             }
-            let resp = client
-                .post(format!("{}/api/alarms", server_url))
-                .json(&map)
-                .send();
+            let resp = post_create_alarm(&client, &server_url, &map);
             handle_response(resp)
         }
         Commands::Cron {
@@ -220,10 +236,7 @@ fn main() -> ExitCode {
             if let Some(b) = callback_body {
                 map.insert("callback_body".to_string(), b);
             }
-            let resp = client
-                .post(format!("{}/api/alarms", server_url))
-                .json(&map)
-                .send();
+            let resp = post_create_alarm(&client, &server_url, &map);
             handle_response(resp)
         }
         Commands::List { status } => {
