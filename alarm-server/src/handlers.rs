@@ -82,7 +82,13 @@ pub async fn create_alarm(
     }
     // 两阶段 emit anchor：在 DB 落库 / 调度 reload 之前就发，让 trace-hub 即时
     // 看到「闹钟设置中」+ 请求入参。失败 / 验证不通过的早退也保留 request 数据。
-    let span_scope_opt = remote_ctx.as_ref().map(|remote| {
+    //
+    // 关键设计：alarm_created ctx 既给 SpanScope，又给 merge_traceparent_into_body
+    // 注入 callback_body.metadata.traceparent ——这样 alarm 触发时
+    // fire_trace_ctx 解析出来的 SpanLink 指向 **alarm_created**（同服务的设置
+    // 记录），而不是 alarm-cli 的工具调用。语义对齐："这次触发关联到哪条设置"。
+    let alarm_created_ctx_opt = remote_ctx.as_ref().map(|r| r.child());
+    let span_scope_opt = alarm_created_ctx_opt.as_ref().map(|ctx| {
         // request_body：建闹钟入参原文。CreateAlarmRequest 不带 Serialize，手工拼。
         let req_body_pretty = serde_json::to_string_pretty(&serde_json::json!({
             "name": body.name,
@@ -93,7 +99,7 @@ pub async fn create_alarm(
             "callback_body": body.callback_body,
         }))
         .unwrap_or_default();
-        let scope = trace::SpanScope::new(remote.child(), "alarm_created")
+        let scope = trace::SpanScope::new(ctx.clone(), "alarm_created")
             .with_flow_name("闹钟设置")
             .with_summary(serde_json::json!({
                 "alarm_type": body.alarm_type,
@@ -139,8 +145,14 @@ pub async fn create_alarm(
     // 并通过 callback HTTP 头透传给回调方（zero 的 gateway 入站续接同棵 trace）。
     // 仅当上游头确实带了 traceparent，且 callback_body 里尚未自行写入时才注入；
     // 已有则尊重调用方原意。callback_body 非 Object（罕见）时保持原样不动。
-    let enriched_callback_body =
-        merge_traceparent_into_body(body.callback_body.clone(), remote_ctx.as_ref());
+    // 用 alarm_created 的 ctx（而非 upstream remote_ctx）注入 callback_body：
+    // 触发时读出来当 SpanLink，UI 上虚线就指回这条"闹钟设置"span 本身，而非
+    // 上游 alarm-cli 工具调用。alarm_created_ctx 为 None 时（无 traceparent）退
+    // 化兼容老逻辑：用 remote_ctx，至少不丢链路。
+    let enriched_callback_body = merge_traceparent_into_body(
+        body.callback_body.clone(),
+        alarm_created_ctx_opt.as_ref().or(remote_ctx.as_ref()),
+    );
     let id = Uuid::new_v4().to_string();
     let name = body.name.clone().unwrap_or_default();
     let alarm = crate::models::AlarmRecord {
