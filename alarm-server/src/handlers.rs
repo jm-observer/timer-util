@@ -5,7 +5,7 @@ use crate::models::{AlarmListResponse, AlarmResponse, CreateAlarmRequest, ListQu
 use crate::scheduler::SchedulerCommand;
 use actix_web::{HttpRequest, HttpResponse, web};
 use chrono::{Local, NaiveDateTime};
-use custom_utils::trace::{self, SpanRecord, SpanStatus, TraceContext, extract_traceparent};
+use custom_utils::trace::{self, SpanStatus, TraceContext, extract_traceparent};
 use log::error;
 use uuid::Uuid;
 
@@ -67,7 +67,6 @@ pub async fn create_alarm(
     db: web::Data<Database>,
     tx: web::Data<tokio::sync::mpsc::Sender<SchedulerCommand>>,
 ) -> Result<HttpResponse, AppError> {
-    let start_ms = trace::now_ms();
     // 提取上游（zero 等）注入的 traceparent；缺失则记 error 日志，后续不再上报 alarm_created。
     let remote_ctx = extract_traceparent(|name| {
         req.headers()
@@ -81,6 +80,29 @@ pub async fn create_alarm(
             body.callback_url
         );
     }
+    // 两阶段 emit anchor：在 DB 落库 / 调度 reload 之前就发，让 trace-hub 即时
+    // 看到「闹钟设置中」+ 请求入参。失败 / 验证不通过的早退也保留 request 数据。
+    let span_scope_opt = remote_ctx.as_ref().map(|remote| {
+        // request_body：建闹钟入参原文。CreateAlarmRequest 不带 Serialize，手工拼。
+        let req_body_pretty = serde_json::to_string_pretty(&serde_json::json!({
+            "name": body.name,
+            "alarm_type": body.alarm_type,
+            "cron_expr": body.cron_expr,
+            "once_at": body.once_at,
+            "callback_url": body.callback_url,
+            "callback_body": body.callback_body,
+        }))
+        .unwrap_or_default();
+        let scope = trace::SpanScope::new(remote.child(), "alarm_created")
+            .with_flow_name("闹钟设置")
+            .with_summary(serde_json::json!({
+                "alarm_type": body.alarm_type,
+                "callback_url": body.callback_url,
+            }))
+            .with_request_body(req_body_pretty);
+        scope.emit_start();
+        scope
+    });
     // Validate alarm_type
     let alarm_type = body.alarm_type.as_str();
     if alarm_type != "cron" && alarm_type != "once" {
@@ -162,71 +184,23 @@ pub async fn create_alarm(
         updated_at: alarm.updated_at.clone(),
         next_fire_at: next.clone(),
     };
-    // 上报「闹钟设置」span（作为上游 span 的子节点，trace_id 复用 → 与后续 alarm_fire 同链路）。
-    if let Some(remote) = remote_ctx {
-        let ctx = remote.child();
-        // 把 callback_body 字符串解析回 JSON，detail 里直接展开可读，比转义字符串好读得多。
-        let callback_body_json: serde_json::Value = alarm
-            .callback_body
-            .as_deref()
-            .and_then(|s| serde_json::from_str(s).ok())
-            .unwrap_or(serde_json::Value::Null);
-        // schedule：cron 用表达式、once 用时间字符串，前端 summary 一行即可看清。
+    // 上报「闹钟设置」span（与 anchor 同 span_id，trace-hub INSERT OR REPLACE 合并）。
+    if let Some(scope) = span_scope_opt {
         let schedule = alarm
             .cron_expr
             .clone()
             .or_else(|| alarm.once_at.clone())
             .unwrap_or_default();
-        // request_body：建闹钟入参原文（含上层调用方的全部 callback_body），便于回溯。
-        // CreateAlarmRequest 不带 Serialize，手工拼一份等价 JSON。
-        let req_body_pretty = serde_json::to_string_pretty(&serde_json::json!({
-            "name": body.name,
-            "alarm_type": body.alarm_type,
-            "cron_expr": body.cron_expr,
-            "once_at": body.once_at,
-            "callback_url": body.callback_url,
-            "callback_body": body.callback_body,
-        }))
-        .ok();
-        trace::record_span(SpanRecord {
-            trace_id: ctx.trace_id,
-            span_id: ctx.span_id,
-            parent_span_id: ctx.parent_span_id,
-            service: String::new(),
-            kind: "alarm_created".to_string(),
-            flow_name: Some("闹钟设置".to_string()),
-            start_ms,
-            end_ms: trace::now_ms(),
-            status: SpanStatus::Ok,
-            summary: serde_json::json!({
+        scope.emit_end(
+            serde_json::to_string_pretty(&resp).ok(),
+            SpanStatus::Ok,
+            Some(serde_json::json!({
                 "alarm_id": alarm.id,
                 "name": alarm.name,
-                "alarm_type": alarm.alarm_type,
                 "schedule": schedule,
-                "callback_url": alarm.callback_url,
                 "next_fire_at": next,
-            }),
-            detail: serde_json::json!({
-                "alarm_id": alarm.id,
-                "name": alarm.name,
-                "alarm_type": alarm.alarm_type,
-                "cron_expr": alarm.cron_expr,
-                "once_at": alarm.once_at,
-                "callback_url": alarm.callback_url,
-                "next_fire_at": next,
-                "callback_body": callback_body_json,
-                "created_at": alarm.created_at,
-                "status": alarm.status,
-            }),
-            request_body: req_body_pretty,
-            // response_body：alarm-server 实际返回给 alarm-cli 的 AlarmResponse
-            // （含分配的 alarm_id、解析后的 next_fire_at、status），trace-hub 详情面板
-            // 直接看「请求 / 响应」两栏，闹钟设置的入参 + 服务端给出的下次触发时间都
-            // 在一个 span 里。
-            response_body: serde_json::to_string_pretty(&resp).ok(),
-            body_truncated: false,
-            links: Vec::new(),
-        });
+            })),
+        );
     }
     Ok(HttpResponse::Created().json(resp))
 }

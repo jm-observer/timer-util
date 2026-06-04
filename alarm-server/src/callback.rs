@@ -1,7 +1,7 @@
 use crate::db::Database;
 use crate::models::AlarmRecord;
 use chrono::Utc;
-use custom_utils::trace::{self, SpanLink, SpanRecord, SpanStatus, TraceContext};
+use custom_utils::trace::{self, SpanLink, SpanStatus, TraceContext};
 use log::{error, info, warn};
 use reqwest::Client;
 use std::sync::Arc;
@@ -102,10 +102,37 @@ pub async fn fire_callback(
     let mut retry_interval = Duration::from_secs(5);
     let max_interval = Duration::from_secs(600);
 
-    // 本次触发的 trace 上下文（once 续接 / cron link）；无 traceparent 则不记录。
-    let fire_start = trace::now_ms();
+    // 本次触发的 trace 上下文（root + SpanLink，跨异步引回 setup span，避免时间倒挂）。
     let traced = fire_trace_ctx(alarm);
     let fire_ctx = traced.as_ref().map(|(c, _)| c.clone());
+    // SpanScope：两阶段 emit。第一阶段 anchor 即时 emit「闹钟正在触发」+ 回调入参，
+    // 即使后续重试 20 次/几十分钟没结果，trace-hub 也立刻能看到。重试结束后 emit_end
+    // 用结果（http_status / 响应 body / 错误）覆盖。
+    let fire_scope = traced.as_ref().map(|(ctx, link)| {
+        let schedule = alarm
+            .cron_expr
+            .clone()
+            .or_else(|| alarm.once_at.clone())
+            .unwrap_or_default();
+        let scope = trace::SpanScope::new(ctx.clone(), "alarm_fire")
+            .with_flow_name("闹钟触发")
+            .with_summary(serde_json::json!({
+                "alarm_id": alarm.id,
+                "name": alarm.name,
+                "alarm_type": alarm.alarm_type,
+                "schedule": schedule,
+                "callback_url": alarm.callback_url,
+            }))
+            .with_request_body(
+                alarm
+                    .callback_body
+                    .clone()
+                    .unwrap_or_else(|| "null".to_string()),
+            );
+        scope.emit_start();
+        // SpanLink 留到 emit_end 时附带（emit_start 只占位，UI 在重试阶段就看到锚点）。
+        (scope, link.clone())
+    });
     let mut outcome_ok = false;
     let mut cancelled = false;
     // 给 span 记录最后一次回调的状态/响应/错误。
@@ -246,8 +273,8 @@ pub async fn fire_callback(
         retry_interval = (retry_interval * 2).min(max_interval);
     }
 
-    // 记录「闹钟触发」span（取消重试不计入；无 traceparent 不记录，避免孤立 trace）。
-    if !cancelled && let Some((ctx, link)) = traced {
+    // 记录「闹钟触发」span 终态（取消重试不计入：anchor 在 trace 里仍存，方便排查）。
+    if !cancelled && let Some((scope, link)) = fire_scope {
         let status = if outcome_ok {
             SpanStatus::Ok
         } else {
@@ -257,61 +284,17 @@ pub async fn fire_callback(
                 .unwrap_or_else(|| "callback failed".to_string());
             SpanStatus::Error(why)
         };
-        // schedule：cron 看表达式、once 看时间，summary 一行就知道是什么闹钟在响。
-        let schedule = alarm
-            .cron_expr
-            .clone()
-            .or_else(|| alarm.once_at.clone())
-            .unwrap_or_default();
-        // callback_body 解析后展开到 detail，便于直接看「闹钟内容」。
-        let callback_body_json: serde_json::Value = alarm
-            .callback_body
-            .as_deref()
-            .and_then(|s| serde_json::from_str(s).ok())
-            .unwrap_or(serde_json::Value::Null);
-        trace::record_span(SpanRecord {
-            trace_id: ctx.trace_id,
-            span_id: ctx.span_id,
-            parent_span_id: ctx.parent_span_id,
-            service: String::new(),
-            kind: "alarm_fire".to_string(),
-            flow_name: Some("闹钟触发".to_string()),
-            start_ms: fire_start,
-            end_ms: trace::now_ms(),
+        scope.emit_end_full(
+            last_response_body,
             status,
-            summary: serde_json::json!({
-                "alarm_id": alarm_id,
-                "name": alarm_name,
-                "alarm_type": alarm.alarm_type,
-                "schedule": schedule,
+            Some(serde_json::json!({
                 "attempts": attempt,
                 "http_status": last_status,
-                "callback_url": callback_url,
-            }),
-            detail: serde_json::json!({
-                "alarm_id": alarm_id,
-                "name": alarm_name,
-                "alarm_type": alarm.alarm_type,
-                "cron_expr": alarm.cron_expr,
-                "once_at": alarm.once_at,
-                "callback_url": callback_url,
                 "triggered_at": triggered_at,
-                "attempts": attempt,
-                "http_status": last_status,
                 "error": last_error,
-                "callback_body": callback_body_json,
-            }),
-            // request_body：实际 POST 给回调方的 body（即「闹钟内容」原文）。
-            request_body: Some(
-                alarm
-                    .callback_body
-                    .clone()
-                    .unwrap_or_else(|| "null".to_string()),
-            ),
-            // response_body：回调方返回（最多 4KB），点开节点能直接看下游的回包。
-            response_body: last_response_body,
-            body_truncated: last_response_truncated,
-            links: link.into_iter().collect(),
-        });
+            })),
+            last_response_truncated,
+            link.into_iter().collect(),
+        );
     }
 }
