@@ -58,7 +58,12 @@ pub fn init_routes(cfg: &mut web::ServiceConfig) {
 
 pub async fn health(db: web::Data<Database>) -> Result<HttpResponse, AppError> {
     let count = db.count_by_status("active").map_err(AppError::from)?;
-    Ok(HttpResponse::Ok().json(serde_json::json!({"status": "ok", "active_alarms": count})))
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "status": "ok",
+        "active_alarms": count,
+        "version": env!("CARGO_PKG_VERSION"),
+        "commit": option_env!("GIT_COMMIT").unwrap_or("unknown"),
+    })))
 }
 
 pub async fn create_alarm(
