@@ -23,6 +23,11 @@ const REPO_OWNER: &str = "jm-observer";
 const REPO_NAME: &str = "timer-util";
 const ABOUT: &str = "Alarm server: recurring/one-time alarm scheduler with HTTP callbacks, SQLite persistence and a dashboard.";
 
+/// 安装时写进 unit `Environment=ALARM_SERVER_PORT=<port>` 的默认端口；
+/// 可被 install 的 `--port` 覆盖。serve 路径靠该 env（env>config>8080）决定监听端口。
+const DEFAULT_PORT: u16 = 8080;
+const PORT_ENV: &str = "ALARM_SERVER_PORT";
+
 /// The host owns its top-level CLI; the unified deploy stack is embedded as a
 /// single pass-through variant. `LinuxService` never reads argv for us beyond
 /// `parse_deploy`, and never writes stdout — text outcomes come back for us to
@@ -32,11 +37,23 @@ enum AppCmd {
     Deploy(DeployCommand),
 }
 
-fn service() -> LinuxService {
+/// 构造 systemd 安装描述。`port` 经 `.env()` 写进生成 unit 的
+/// `Environment=ALARM_SERVER_PORT=<port>`，install 时由 `--port`（default 8080）决定，
+/// 后续 G10 部署脚本可经 `--port` 注入 g10-services.json 配置的端口。
+fn service(port: u16) -> LinuxService {
     LinuxService::new(APP_NAME, REPO_OWNER, REPO_NAME, env!("CARGO_PKG_VERSION"))
         .description("Alarm Server - recurring/one-time alarm scheduler")
         .extra_bins(["alarm-cli"])
+        .env(PORT_ENV, port.to_string())
         .watchdog_sec(30)
+}
+
+/// install 端口取值：argv 里的 `--port <n>`（如 `--port 9000`）→ 解析失败/缺省回退
+/// `DEFAULT_PORT`。G10 部署脚本经此参数把 g10-services.json 端口注入生成的 unit。
+fn install_port() -> u16 {
+    custom_utils::args::arg_value("--port", "-p")
+        .and_then(|raw| raw.trim().parse::<u16>().ok())
+        .unwrap_or(DEFAULT_PORT)
 }
 
 /// Our own usage block; spliced ahead of the library's deploy usage on `--help`.
@@ -44,7 +61,8 @@ fn own_usage() -> String {
     format!(
         "{ABOUT}\n\n\
          Usage:\n  \
-         {APP_NAME} [serve] [-w|--workspace <path>]   run the server (default; workspace default ~/.config/{APP_NAME})\n\n\
+         {APP_NAME} [serve] [-w|--workspace <path>]   run the server (default; workspace default ~/.config/{APP_NAME})\n  \
+         {APP_NAME} install [--port <n>] [...]        install systemd unit (writes Environment=ALARM_SERVER_PORT, default {DEFAULT_PORT})\n\n\
          Use `alarm-cli` to create/list/cancel alarms against a running server."
     )
 }
@@ -59,7 +77,9 @@ async fn main() -> anyhow::Result<()> {
     )
     .build();
 
-    let svc = service();
+    // 端口仅在 install 写 unit 时有意义（serve 路径靠 env/config 解析），
+    // 但 service() 始终带上 `.env(ALARM_SERVER_PORT)`：dry-run/install 时端口才落进 unit。
+    let svc = service(install_port());
 
     let cmd = match svc.parse_deploy() {
         Some(c) => AppCmd::Deploy(c),
