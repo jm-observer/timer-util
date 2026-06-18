@@ -26,3 +26,7 @@ Cargo.lock
 
 # Stray test workspace artifacts
 .alarm-server/
+
+# 交叉编译产物（aarch64 → G10，由 deploy-g10.ps1 生成）
+/target-aarch64/
+/.cargo-cache-aarch64/

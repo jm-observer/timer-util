@@ -134,14 +134,22 @@ async fn run_server(workspace: PathBuf) -> anyhow::Result<()> {
     let db_data = web::Data::new(db);
     let tx_data = web::Data::new(tx);
 
-    log::info!("alarm-server listening on 0.0.0.0:{}", config.port);
+    // `ALARM_SERVER_BIND`（如 G10 部署面板注入的 `0.0.0.0:8080`）若设置且非空则作为
+    // 完整 host:port 监听地址；缺省回退 `0.0.0.0:{config.port}`（config.toml / 默认 8080）。
+    let bind_addr = std::env::var("ALARM_SERVER_BIND")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("0.0.0.0:{}", config.port));
+
+    log::info!("alarm-server listening on {}", bind_addr);
     HttpServer::new(move || {
         App::new()
             .app_data(db_data.clone())
             .app_data(tx_data.clone())
             .configure(handlers::init_routes)
     })
-    .bind(format!("0.0.0.0:{}", config.port))?
+    .bind(&bind_addr)?
     .run()
     .await?;
     Ok(())
