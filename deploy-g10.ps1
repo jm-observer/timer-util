@@ -70,28 +70,45 @@ $Bins = @(
     @{ Crate = "alarm-server"; Bin = "alarm-cli" }
 )
 
+# 产物输出目录（host 可见，从容器内的 CARGO_TARGET_DIR 拷出来）。
+# 改用 dist/g10 而非 target/ 是为了把 CARGO_TARGET_DIR 放进命名卷（Linux ext4），
+# 避免 Windows NTFS 经 Docker Desktop 的 mtime/权限抖动让 cargo 指纹失效每次全量重编。
+$OutDir = Join-Path $RepoRoot "dist/g10"
+
 if (-not $SkipBuild) {
     Write-Host "==> 交叉编译 $Target（Docker: $Image）" -ForegroundColor Cyan
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
         throw "未找到 docker，请先安装/启动 Docker Desktop。"
     }
 
-    # alarm-server crate 同时产出 alarm-server + alarm-cli，构建一次即可（带 prod feature）。
-    $buildCmd = "cargo build --release --target $Target -p alarm-server --features prod"
+    New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
-    # custom-utils 已改为 crates.io 0.16 依赖，容器只需挂当前仓即可（无需挂 ../custom-utils）。
-    # 用命名卷缓存 cargo registry，加速重复构建。AR_ 显式补上（镜像只预置了 CC_/CXX_/LINKER）。
+    # alarm-server crate 同时产出 alarm-server + alarm-cli，构建一次即可（带 prod feature）。
+    # 构建后把所有 bin 从容器内 CARGO_TARGET_DIR（命名卷）拷到 host 可见的 /work/dist/g10/。
+    $copyCmd = ($Bins | ForEach-Object {
+        "cp /cargo-target/$Target/release/$($_.Bin) /work/dist/g10/"
+    }) -join " && "
+    $buildCmd = "cargo build --release --target $Target -p alarm-server --features prod && " `
+        + "mkdir -p /work/dist/g10 && $copyCmd"
+
+    # 命名卷缓存：
+    #   - cargo registry（依赖源/索引）
+    #   - cargo target（编译产物指纹；放命名卷 = Linux ext4，避免 NTFS 经 Docker Desktop 时
+    #     mtime 抖动导致 cargo 每次都重编）
+    # AR_ 显式补上（镜像只预置了 CC_/CXX_/LINKER）。
     docker run --rm `
         -v "${RepoRoot}:/work" `
-        -v "alarm-server-cargo-registry:/usr/local/cargo/registry" `
+        -v "alarm-server-cargo-registry:/root/.cargo/registry" `
+        -v "alarm-server-cargo-target:/cargo-target" `
         -w /work `
+        -e CARGO_TARGET_DIR=/cargo-target `
         -e AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar `
         $Image bash -lc $buildCmd
     if ($LASTEXITCODE -ne 0) { throw "交叉编译失败（exit $LASTEXITCODE）" }
 }
 
-# 校验产物存在。
-$ReleaseDir = Join-Path $RepoRoot "target/$Target/release"
+# 校验产物存在（统一在 dist/g10 下；-SkipBuild 时也读这里）。
+$ReleaseDir = $OutDir
 foreach ($b in $Bins) {
     $p = Join-Path $ReleaseDir $b.Bin
     if (-not (Test-Path $p)) { throw "产物缺失：$p（先去掉 -SkipBuild 完整构建）" }
@@ -126,7 +143,11 @@ foreach ($b in $Bins) {
 if ($Service -eq "alarm-server") {
     Write-Host "==> 重装 alarm-server unit（ALARM_SERVER_BIND=$Bind, workspace=$Workspace）" -ForegroundColor Cyan
     # 把每条 KEY=VAL 拼成 `-e 'KEY=VAL'`（单引号防远端 shell 二次解析），追加进 install 命令。
-    $envArgs = ($Env | Where-Object { $_ -and $_.Trim() -ne "" } | ForEach-Object { "-e '$($_.Trim())'" }) -join " "
+    # 注：面板把多条 env 拼成 "K1=V1,K2=V2,K3=V3" 作单参传入（`[string[]]` 从 `pwsh -File`
+    # 单 argv 不会自动拆逗号），故先按逗号展开再逐条转 `-e`。
+    $envArgs = ($Env | Where-Object { $_ -and $_.Trim() -ne "" } | ForEach-Object {
+        $_.Split(",") | Where-Object { $_.Trim() -ne "" } | ForEach-Object { "-e '$($_.Trim())'" }
+    }) -join " "
     if ($envArgs) {
         Write-Host "    注入环境变量：$($Env -join ', ')" -ForegroundColor DarkGray
     }
