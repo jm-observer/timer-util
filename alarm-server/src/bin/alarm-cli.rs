@@ -115,9 +115,20 @@ fn validate_status(s: &str) -> Result<String, String> {
     }
 }
 
+/// 解析 alarm-server 基址。优先级：显式 `--server` flag > `ALARM_SERVER_URL` env
+/// > workspace `config.toml` 的 `port` > 默认 `http://127.0.0.1:8080`。
+///
+/// `ALARM_SERVER_URL` 用于宿主（如 zero.service）通过 systemd `Environment=` 注入
+/// 服务级地址；子进程继承该 env，免去每次调用都显式 `--server`。
 fn get_server_url(cli_server: &str, arg_workspace: &Option<String>) -> String {
     if cli_server != "http://127.0.0.1:8080" {
         return cli_server.to_string();
+    }
+    if let Ok(env_url) = std::env::var("ALARM_SERVER_URL") {
+        let trimmed = env_url.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
     }
     if let Ok(workspace) = custom_utils::args::workspace(arg_workspace, APP_NAME) {
         let config_path = workspace.join(CONFIG_FILENAME);
